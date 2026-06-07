@@ -1,7 +1,10 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
-import { DocumentService } from '../../services/document.service';
+import { DocumentsApiService, DocumentListItem } from '../../services/documents-api.service';
+
+type StatusBadgeClass = 'badge-uploaded' | 'badge-processing' | 'badge-completed' | 'badge-failed' | 'badge-needs-review' | 'badge-unknown';
+type LanguageBadgeClass = 'badge-language-en' | 'badge-language-fr' | 'badge-language-bilingual' | 'badge-language-unknown';
 
 @Component({
   selector: 'app-documents-list',
@@ -10,28 +13,59 @@ import { DocumentService } from '../../services/document.service';
   template: `
     <div class="container">
       <div class="header">
-        <h1>Financial Documents</h1>
-        <a routerLink="/documents/upload" class="btn btn-primary">Upload Document</a>
+        <h1>{{ labels.title }}</h1>
+        <a routerLink="/documents/upload" class="btn btn-primary">{{ labels.actions.uploadNewDocument }}</a>
       </div>
 
-      <div *ngIf="loading" class="loading">Loading documents...</div>
+      <div *ngIf="loading" class="loading-state">{{ labels.loading }}</div>
 
-      <div *ngIf="!loading && documents.length === 0" class="no-documents">
-        <p>No documents yet. <a routerLink="/documents/upload">Upload your first document</a></p>
+      <div *ngIf="!loading && errorMessage" class="error-state">
+        <p>{{ errorMessage }}</p>
+        <button type="button" class="btn btn-secondary" (click)="loadDocuments()">{{ labels.retry }}</button>
       </div>
 
-      <div *ngIf="!loading && documents.length > 0" class="documents-grid">
-        <div *ngFor="let doc of documents" class="document-card" [routerLink]="['/documents', doc.id]">
-          <div class="card-header">
-            <h3>{{ doc.fileName }}</h3>
-            <span class="badge" [class]="'status-' + doc.status.toLowerCase()">{{ doc.status }}</span>
-          </div>
-          <div class="card-body">
-            <p><strong>Type:</strong> {{ doc.type }}</p>
-            <p><strong>Size:</strong> {{ formatFileSize(doc.fileSizeBytes) }}</p>
-            <p><strong>Uploaded:</strong> {{ doc.uploadedAt | date:'short' }}</p>
-          </div>
-        </div>
+      <div *ngIf="!loading && !errorMessage && documents.length === 0" class="empty-state">
+        <p>{{ labels.empty }}</p>
+      </div>
+
+      <div *ngIf="!loading && !errorMessage && documents.length > 0" class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ labels.columns.originalFileName }}</th>
+              <th>{{ labels.columns.documentType }}</th>
+              <th>{{ labels.columns.documentLanguage }}</th>
+              <th>{{ labels.columns.processingStatus }}</th>
+              <th>{{ labels.columns.uploadedDate }}</th>
+              <th>{{ labels.columns.processedDate }}</th>
+              <th>{{ labels.columns.actions }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let document of documents">
+              <td>{{ document.fileName }}</td>
+              <td>{{ document.documentType }}</td>
+              <td>
+                <span class="badge" [ngClass]="getLanguageBadgeClass(document.documentLanguage)">
+                  {{ getLanguageLabel(document.documentLanguage) }}
+                </span>
+              </td>
+              <td>
+                <span class="badge" [ngClass]="getStatusBadgeClass(document.status)">
+                  {{ getStatusLabel(document.status) }}
+                </span>
+              </td>
+              <td>{{ formatDate(document.uploadedAtUtc) }}</td>
+              <td>{{ formatDate(document.processedAtUtc) }}</td>
+              <td>
+                <div class="row-actions">
+                  <a [routerLink]="['/documents', document.id]" class="btn btn-link">{{ labels.actions.viewDetails }}</a>
+                  <a routerLink="/documents/upload" class="btn btn-link">{{ labels.actions.uploadNewDocument }}</a>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   `,
@@ -39,138 +73,279 @@ import { DocumentService } from '../../services/document.service';
     .container {
       max-width: 1200px;
       margin: 0 auto;
-      padding: 20px;
+      padding: 24px;
     }
 
     .header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 30px;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 600;
+    }
+
+    .loading-state,
+    .error-state,
+    .empty-state {
+      border: 1px solid #e4e7ec;
+      border-radius: 8px;
+      padding: 20px;
+      background-color: #ffffff;
+      color: #475467;
+    }
+
+    .error-state {
+      border-color: #fda29b;
+      color: #b42318;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .error-state p {
+      margin: 0;
+    }
+
+    .table-wrapper {
+      border: 1px solid #e4e7ec;
+      border-radius: 8px;
+      overflow: hidden;
+      background-color: #ffffff;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    thead {
+      background-color: #f9fafb;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 12px 14px;
+      border-bottom: 1px solid #e4e7ec;
+      vertical-align: middle;
+      font-size: 14px;
+    }
+
+    tbody tr:last-child td {
+      border-bottom: none;
     }
 
     .btn {
-      padding: 10px 20px;
-      border-radius: 4px;
-      text-decoration: none;
-      font-weight: 500;
       border: none;
+      border-radius: 6px;
       cursor: pointer;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
 
     .btn-primary {
-      background-color: #007bff;
-      color: white;
+      background-color: #2563eb;
+      color: #ffffff;
+      padding: 10px 16px;
     }
 
     .btn-primary:hover {
-      background-color: #0056b3;
+      background-color: #1d4ed8;
     }
 
-    .loading, .no-documents {
-      text-align: center;
-      padding: 40px;
-      color: #666;
+    .btn-secondary {
+      background-color: #475467;
+      color: #ffffff;
+      padding: 8px 14px;
     }
 
-    .documents-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-      gap: 20px;
+    .btn-secondary:hover {
+      background-color: #344054;
     }
 
-    .document-card {
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      padding: 20px;
-      cursor: pointer;
-      transition: all 0.3s ease;
+    .btn-link {
+      background: transparent;
+      color: #175cd3;
+      padding: 0;
     }
 
-    .document-card:hover {
-      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-      transform: translateY(-2px);
-    }
-
-    .card-header {
+    .row-actions {
       display: flex;
-      justify-content: space-between;
-      align-items: start;
-      margin-bottom: 15px;
-    }
-
-    .card-header h3 {
-      margin: 0;
-      font-size: 18px;
-      flex: 1;
-      word-break: break-word;
+      gap: 12px;
+      flex-wrap: wrap;
     }
 
     .badge {
-      padding: 4px 12px;
-      border-radius: 20px;
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 4px 10px;
       font-size: 12px;
-      font-weight: bold;
+      font-weight: 700;
+      line-height: 1;
       white-space: nowrap;
-      margin-left: 10px;
     }
 
-    .status-pending {
-      background-color: #ffc107;
-      color: #000;
+    .badge-uploaded {
+      background-color: #eff8ff;
+      color: #175cd3;
     }
 
-    .status-processing {
-      background-color: #17a2b8;
-      color: white;
+    .badge-processing {
+      background-color: #ecfdf3;
+      color: #027a48;
     }
 
-    .status-completed {
-      background-color: #28a745;
-      color: white;
+    .badge-completed {
+      background-color: #ecfdf3;
+      color: #027a48;
     }
 
-    .status-failed {
-      background-color: #dc3545;
-      color: white;
+    .badge-failed {
+      background-color: #fef3f2;
+      color: #b42318;
     }
 
-    .card-body p {
-      margin: 8px 0;
-      font-size: 14px;
-      color: #666;
+    .badge-needs-review {
+      background-color: #fff7ed;
+      color: #b54708;
+    }
+
+    .badge-unknown {
+      background-color: #f2f4f7;
+      color: #475467;
+    }
+
+    .badge-language-en {
+      background-color: #eff8ff;
+      color: #175cd3;
+    }
+
+    .badge-language-fr {
+      background-color: #f5f3ff;
+      color: #6941c6;
+    }
+
+    .badge-language-bilingual {
+      background-color: #ecfdf3;
+      color: #027a48;
+    }
+
+    .badge-language-unknown {
+      background-color: #f2f4f7;
+      color: #475467;
     }
   `]
 })
 export class DocumentsListComponent implements OnInit {
-  documents: any[] = [];
-  loading = true;
+  documents: DocumentListItem[] = [];
+  loading = false;
+  errorMessage = '';
 
-  constructor(private documentService: DocumentService) {}
+  readonly labels = {
+    title: 'Documents',
+    loading: 'Loading documents...',
+    empty: 'No documents found.',
+    retry: 'Retry',
+    columns: {
+      originalFileName: 'Original file name',
+      documentType: 'Document type',
+      documentLanguage: 'Document language',
+      processingStatus: 'Processing status',
+      uploadedDate: 'Uploaded date',
+      processedDate: 'Processed date',
+      actions: 'Actions'
+    },
+    actions: {
+      viewDetails: 'View details',
+      uploadNewDocument: 'Upload new document'
+    }
+  } as const;
 
-  ngOnInit() {
+  private readonly statusLabels: Record<string, string> = {
+    Uploaded: 'Uploaded',
+    Processing: 'Processing',
+    Completed: 'Completed',
+    Failed: 'Failed',
+    NeedsReview: 'Needs Review'
+  };
+
+  private readonly languageLabels: Record<string, string> = {
+    EnglishCanada: 'English Canada',
+    FrenchCanada: 'Français Canada',
+    BilingualCanada: 'Bilingual Canada',
+    Unknown: 'Auto/Unknown'
+  };
+
+  constructor(private readonly documentsApiService: DocumentsApiService) {}
+
+  ngOnInit(): void {
     this.loadDocuments();
   }
 
-  loadDocuments() {
+  loadDocuments(): void {
     this.loading = true;
-    this.documentService.getAllDocuments().subscribe({
-      next: (data) => {
-        this.documents = data;
+    this.errorMessage = '';
+
+    this.documentsApiService.getDocuments().subscribe({
+      next: (response) => {
+        this.documents = response;
         this.loading = false;
       },
-      error: (err) => {
-        console.error('Error loading documents:', err);
+      error: () => {
         this.loading = false;
+        this.errorMessage = 'Failed to load documents. Please try again.';
       }
     });
   }
 
-  formatFileSize(bytes: number): string {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+  getStatusLabel(status: string): string {
+    return this.statusLabels[status] ?? status;
+  }
+
+  getLanguageLabel(language: string): string {
+    return this.languageLabels[language] ?? this.languageLabels['Unknown'];
+  }
+
+  getStatusBadgeClass(status: string): StatusBadgeClass {
+    const badgeClassMap: Record<string, StatusBadgeClass> = {
+      Uploaded: 'badge-uploaded',
+      Processing: 'badge-processing',
+      Completed: 'badge-completed',
+      Failed: 'badge-failed',
+      NeedsReview: 'badge-needs-review'
+    };
+
+    return badgeClassMap[status] ?? 'badge-unknown';
+  }
+
+  getLanguageBadgeClass(language: string): LanguageBadgeClass {
+    const badgeClassMap: Record<string, LanguageBadgeClass> = {
+      EnglishCanada: 'badge-language-en',
+      FrenchCanada: 'badge-language-fr',
+      BilingualCanada: 'badge-language-bilingual',
+      Unknown: 'badge-language-unknown'
+    };
+
+    return badgeClassMap[language] ?? 'badge-language-unknown';
+  }
+
+  formatDate(value: string | null): string {
+    if (!value) {
+      return '-';
+    }
+
+    return new Date(value).toLocaleString();
   }
 }
