@@ -91,6 +91,8 @@ public class DocumentProcessingService : IDocumentProcessingService
         }
 
         document.ProcessingStatus = ProcessingStatus.Processing;
+        document.ProcessedAtUtc = null;
+        document.FailureReason = null;
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         var extractionJob = new ExtractionJob

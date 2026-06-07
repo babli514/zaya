@@ -1,8 +1,8 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, RouterModule } from '@angular/router';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
-import { catchError, forkJoin, of } from 'rxjs';
+import { Subscription, catchError, forkJoin, of, switchMap, timer } from 'rxjs';
 import { DocumentDetailDto, DocumentResultDto, DocumentService, ValidationWarningDto } from '../../services/document.service';
 
 type UiLanguage = 'en' | 'fr';
@@ -46,6 +46,11 @@ type UiLanguage = 'en' | 'fr';
             <p class="subtitle">Document ID: {{ document.id }}</p>
           </div>
           <a routerLink="/documents" class="btn btn-secondary">Back to list</a>
+        </div>
+
+        <div *ngIf="polling" class="status-callout status-processing">
+          <strong>Processing</strong>
+          <p>{{ processingProgressMessage }}</p>
         </div>
 
         <div *ngIf="isNeedsReview" class="status-callout status-needs-review">
@@ -274,6 +279,34 @@ type UiLanguage = 'en' | 'fr';
       padding: 12px 14px;
       margin-bottom: 14px;
       font-weight: 500;
+    }
+
+    .status-processing {
+      background: #eff8ff;
+      border: 1px solid #b2ddff;
+      color: #175cd3;
+    }
+
+    .status-processing::before {
+      content: '';
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      margin-right: 8px;
+      border: 2px solid #d1e9ff;
+      border-top: 2px solid #175cd3;
+      border-radius: 50%;
+      vertical-align: middle;
+      animation: spin 1s linear infinite;
+    }
+
+    .status-processing p {
+      margin: 2px 0 0;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
     }
 
     .status-needs-review {
@@ -514,7 +547,7 @@ type UiLanguage = 'en' | 'fr';
     }
   `]
 })
-export class DocumentDetailComponent implements OnInit {
+export class DocumentDetailComponent implements OnInit, OnDestroy {
   document: DocumentDetailDto | null = null;
   result: DocumentResultDto | null = null;
   loading = true;
@@ -533,6 +566,10 @@ export class DocumentDetailComponent implements OnInit {
   isPdfPreview = false;
   isImagePreview = false;
   previewFailed = false;
+  polling = false;
+  processingProgressMessage = '';
+  private routeSubscription: Subscription | null = null;
+  private statusPollingSubscription: Subscription | null = null;
 
   constructor(
     private readonly documentService: DocumentService,
@@ -557,15 +594,22 @@ export class DocumentDetailComponent implements OnInit {
   }
 
   ngOnInit(): void {
-    this.route.params.subscribe((params) => {
+    this.routeSubscription = this.route.params.subscribe((params) => {
       const id = params['id'];
       if (id) {
+        this.stopStatusPolling();
         this.loadDocument(id);
       }
     });
   }
 
+  ngOnDestroy(): void {
+    this.routeSubscription?.unsubscribe();
+    this.stopStatusPolling();
+  }
+
   loadDocument(id: string): void {
+    this.stopStatusPolling();
     this.loading = true;
     this.loadError = '';
     this.actionError = '';
@@ -611,15 +655,24 @@ export class DocumentDetailComponent implements OnInit {
 
     this.actionLoading = true;
     this.actionError = '';
+    this.polling = true;
+    this.processingProgressMessage = 'Submitting process request...';
 
-    this.documentService.processDocument(this.document.id).subscribe({
-      next: () => {
+    const documentId = this.document.id;
+    this.document.status = 'Processing';
+
+    this.documentService.processDocument(documentId).subscribe({
+      next: (response) => {
         this.actionLoading = false;
-        this.loadDocument(this.document!.id);
+        this.document = response;
+        this.startStatusPolling(documentId);
       },
       error: (err) => {
         this.actionLoading = false;
+        this.polling = false;
+        this.processingProgressMessage = '';
         this.actionError = this.getErrorMessage(err);
+        this.loadDocument(documentId);
       }
     });
   }
@@ -724,6 +777,51 @@ export class DocumentDetailComponent implements OnInit {
     };
 
     return map[status] ?? 'badge-unknown';
+  }
+
+  private startStatusPolling(documentId: string): void {
+    this.stopStatusPolling();
+    this.polling = true;
+    this.processingProgressMessage = 'Checking processing status every 2 seconds...';
+
+    this.statusPollingSubscription = timer(0, 2000).pipe(
+      switchMap(() => this.documentService.getDocument(documentId))
+    ).subscribe({
+      next: (document) => {
+        this.document = document;
+
+        if (document.status === 'Completed' || document.status === 'NeedsReview' || document.status === 'Failed') {
+          this.stopStatusPolling();
+          this.processingProgressMessage = '';
+
+          this.documentService.getDocumentResult(documentId).pipe(catchError(() => of(null))).subscribe({
+            next: (result) => {
+              this.result = result;
+              this.engineBadges = this.buildEngineBadges(result);
+              if (document.status === 'Failed') {
+                this.actionError = this.failureReason;
+              }
+            },
+            error: () => {
+              if (document.status === 'Failed') {
+                this.actionError = this.failureReason;
+              }
+            }
+          });
+        }
+      },
+      error: (err) => {
+        this.stopStatusPolling();
+        this.processingProgressMessage = '';
+        this.actionError = this.getErrorMessage(err);
+      }
+    });
+  }
+
+  private stopStatusPolling(): void {
+    this.statusPollingSubscription?.unsubscribe();
+    this.statusPollingSubscription = null;
+    this.polling = false;
   }
 
   private buildEngineBadges(result: DocumentResultDto | null): string[] {
