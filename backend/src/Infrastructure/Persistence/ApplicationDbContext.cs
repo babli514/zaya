@@ -1,55 +1,67 @@
 using FinancialOCR.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
 
 namespace FinancialOCR.Infrastructure.Persistence;
 
-public class ApplicationDbContext : DbContext
+public class AppDbContext : DbContext
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
-    public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : base(options)
+    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
     {
     }
 
     public DbSet<Document> Documents { get; set; }
+    public DbSet<ExtractionJob> ExtractionJobs { get; set; }
+    public DbSet<ExtractedFinancialDocument> ExtractedFinancialDocuments { get; set; }
+    public DbSet<ExtractedLineItem> ExtractedLineItems { get; set; }
+    public DbSet<ManualCorrection> ManualCorrections { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(Document).Assembly);
+    }
 
-        modelBuilder.Entity<Document>(entity =>
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        ApplyTimestamps();
+        return base.SaveChangesAsync(cancellationToken);
+    }
+
+    public override int SaveChanges()
+    {
+        ApplyTimestamps();
+        return base.SaveChanges();
+    }
+
+    private void ApplyTimestamps()
+    {
+        var utcNow = DateTime.UtcNow;
+
+        foreach (var entry in ChangeTracker.Entries<Document>())
         {
-            entity.HasKey(e => e.Id);
+            if (entry.State == EntityState.Added && entry.Entity.UploadedAtUtc == default)
+            {
+                entry.Entity.UploadedAtUtc = utcNow;
+            }
+        }
 
-            entity.Property(e => e.FileName)
-                .IsRequired()
-                .HasMaxLength(255);
+        foreach (var entry in ChangeTracker.Entries<ExtractedFinancialDocument>())
+        {
+            if (entry.State == EntityState.Added)
+            {
+                if (entry.Entity.CreatedAtUtc == default)
+                {
+                    entry.Entity.CreatedAtUtc = utcNow;
+                }
 
-            entity.Property(e => e.ContentType)
-                .IsRequired()
-                .HasMaxLength(100);
+                entry.Entity.UpdatedAtUtc = utcNow;
+            }
 
-            entity.Property(e => e.Type)
-                .HasConversion<string>();
-
-            entity.Property(e => e.Status)
-                .HasConversion<string>();
-
-            entity.Property(e => e.ErrorMessage)
-                .HasMaxLength(1000);
-
-            entity.Property(e => e.ExtractedData)
-                .HasConversion(
-                    v => JsonSerializer.Serialize(v, JsonOptions),
-                    v => JsonSerializer.Deserialize<Dictionary<string, object>>(v, JsonOptions) ?? new()
-                );
-
-            entity.HasIndex(e => e.Status);
-            entity.HasIndex(e => e.UploadedAt);
-        });
+            if (entry.State == EntityState.Modified)
+            {
+                entry.Property(e => e.CreatedAtUtc).IsModified = false;
+                entry.Entity.UpdatedAtUtc = utcNow;
+            }
+        }
     }
 }

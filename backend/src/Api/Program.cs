@@ -41,7 +41,7 @@ builder.Services.AddCors(options =>
 // Database
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? "Server=(localdb)\\mssqllocaldb;Database=FinancialOCR;Trusted_Connection=true;";
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
+builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(connectionString)
 );
 
@@ -51,14 +51,14 @@ builder.Services.AddScoped<IDocumentService, DocumentService>();
 
 // Health checks
 builder.Services.AddHealthChecks()
-    .AddDbContextCheck<ApplicationDbContext>();
+    .AddDbContextCheck<AppDbContext>();
 
 var app = builder.Build();
 
 // Migrations
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
 }
 

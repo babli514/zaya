@@ -7,9 +7,9 @@ namespace FinancialOCR.Infrastructure.Repositories;
 
 public class DocumentRepository : IDocumentRepository
 {
-    private readonly ApplicationDbContext _context;
+    private readonly AppDbContext _context;
 
-    public DocumentRepository(ApplicationDbContext context)
+    public DocumentRepository(AppDbContext context)
     {
         _context = context;
     }
