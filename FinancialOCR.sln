@@ -1,0 +1,59 @@
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{A81C7385-94BC-4A5C-A162-784EDEF75D7F}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Domain", "Domain", "{9B8A9335-70A0-467D-89B9-B9C70F8F1F45}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FinancialOCR.Domain", "src\Domain\FinancialOCR.Domain\FinancialOCR.Domain.csproj", "{7EBB189A-C6F3-4CE7-B853-547A018E7A26}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Application", "Application", "{83E07A5B-F0C5-4F6C-87F4-98BBB4ABB78B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FinancialOCR.Application", "src\Application\FinancialOCR.Application\FinancialOCR.Application.csproj", "{38D5F6F9-19D7-4E75-AA13-B00528F9DD47}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Infrastructure", "Infrastructure", "{477E5887-9640-4584-8B85-8B7A57533990}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FinancialOCR.Infrastructure", "src\Infrastructure\FinancialOCR.Infrastructure\FinancialOCR.Infrastructure.csproj", "{47557847-6B26-4F5D-B498-2A35B3EBC09E}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Api", "Api", "{8EA29363-C0A4-4882-AD21-59EC193200C0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FinancialOCR.Api", "src\Api\FinancialOCR.Api\FinancialOCR.Api.csproj", "{B387EBC1-04B0-4C22-87F1-8FC16AC77128}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7EBB189A-C6F3-4CE7-B853-547A018E7A26}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7EBB189A-C6F3-4CE7-B853-547A018E7A26}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7EBB189A-C6F3-4CE7-B853-547A018E7A26}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7EBB189A-C6F3-4CE7-B853-547A018E7A26}.Release|Any CPU.Build.0 = Release|Any CPU
+		{38D5F6F9-19D7-4E75-AA13-B00528F9DD47}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{38D5F6F9-19D7-4E75-AA13-B00528F9DD47}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{38D5F6F9-19D7-4E75-AA13-B00528F9DD47}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{38D5F6F9-19D7-4E75-AA13-B00528F9DD47}.Release|Any CPU.Build.0 = Release|Any CPU
+		{47557847-6B26-4F5D-B498-2A35B3EBC09E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{47557847-6B26-4F5D-B498-2A35B3EBC09E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{47557847-6B26-4F5D-B498-2A35B3EBC09E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{47557847-6B26-4F5D-B498-2A35B3EBC09E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B387EBC1-04B0-4C22-87F1-8FC16AC77128}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B387EBC1-04B0-4C22-87F1-8FC16AC77128}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B387EBC1-04B0-4C22-87F1-8FC16AC77128}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B387EBC1-04B0-4C22-87F1-8FC16AC77128}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{9B8A9335-70A0-467D-89B9-B9C70F8F1F45} = {A81C7385-94BC-4A5C-A162-784EDEF75D7F}
+		{7EBB189A-C6F3-4CE7-B853-547A018E7A26} = {9B8A9335-70A0-467D-89B9-B9C70F8F1F45}
+		{83E07A5B-F0C5-4F6C-87F4-98BBB4ABB78B} = {A81C7385-94BC-4A5C-A162-784EDEF75D7F}
+		{38D5F6F9-19D7-4E75-AA13-B00528F9DD47} = {83E07A5B-F0C5-4F6C-87F4-98BBB4ABB78B}
+		{477E5887-9640-4584-8B85-8B7A57533990} = {A81C7385-94BC-4A5C-A162-784EDEF75D7F}
+		{47557847-6B26-4F5D-B498-2A35B3EBC09E} = {477E5887-9640-4584-8B85-8B7A57533990}
+		{8EA29363-C0A4-4882-AD21-59EC193200C0} = {A81C7385-94BC-4A5C-A162-784EDEF75D7F}
+		{B387EBC1-04B0-4C22-87F1-8FC16AC77128} = {8EA29363-C0A4-4882-AD21-59EC193200C0}
+	EndGlobalSection
+EndGlobal

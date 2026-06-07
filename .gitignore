@@ -1,0 +1,123 @@
+# ===========================
+# .NET / C# Build Artifacts
+# ===========================
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+*.user
+*.suo
+*.sln.docstates
+.vs/
+.vscode/
+
+# Entity Framework
+*.db
+*.db-shm
+*.db-wal
+Migrations/
+
+# NuGet
+*.nupkg
+*.snupkg
+NugetPackages/
+.nuget/
+
+# ===========================
+# Angular / Node Build Artifacts
+# ===========================
+node_modules/
+dist/
+out-tsc/
+.angular/
+npm-debug.log
+yarn-error.log
+
+# ===========================
+# IDE & Editor Configuration
+# ===========================
+.idea/
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.history/
+
+# ===========================
+# Testing & Coverage
+# ===========================
+/coverage
+testem.log
+
+# ===========================
+# Application Logs
+# ===========================
+logs/
+*.log
+
+# ===========================
+# Environment & Secrets
+# ===========================
+.env
+.env.local
+.env.*.local
+appsettings.*.json
+!appsettings.Development.json
+
+# ===========================
+# Temporary & Cache Files
+# ===========================
+/tmp
+.sass-cache/
+/connect.lock
+/libpeerconnection.log
+.DS_Store
+Thumbs.db
+
+# ===========================
+# Angular Specific
+# ===========================
+/bazel-out
+/typings
+/.angular/cache
+
+# ===========================
+# Visual Studio & Rider
+# ===========================
+.vs/
+.rider/
+*.sln.iml
+*.rsuser
+*.suo
+*.user
+*.VC.db
+*.VC.VC.opendb
+
+# ===========================
+# macOS
+# ===========================
+.DS_Store
+.AppleDouble
+.LSOverride
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+
+# ===========================
+# Windows
+# ===========================
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
