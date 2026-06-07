@@ -1,8 +1,7 @@
 using FinancialOCR.Application.Services;
-using FinancialOCR.Domain.Interfaces;
 using FinancialOCR.Infrastructure.Persistence;
-using FinancialOCR.Infrastructure.Repositories;
 using FinancialOCR.Api.Middleware;
+using FinancialOCR.Api.Options;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
@@ -45,8 +44,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(connectionString)
 );
 
-// Dependency Injection
-builder.Services.AddScoped<IDocumentRepository, DocumentRepository>();
+builder.Services.Configure<DocumentUploadOptions>(builder.Configuration.GetSection(DocumentUploadOptions.SectionName));
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 
 // Health checks

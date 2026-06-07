@@ -1,6 +1,9 @@
+using FinancialOCR.Api.Options;
 using FinancialOCR.Application.DTOs;
 using FinancialOCR.Application.Services;
+using FinancialOCR.Domain.Entities;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace FinancialOCR.Api.Controllers;
 
@@ -8,144 +11,204 @@ namespace FinancialOCR.Api.Controllers;
 [Route("api/[controller]")]
 public class DocumentsController : ControllerBase
 {
+    private static readonly HashSet<string> AllowedContentTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "application/pdf",
+        "image/png",
+        "image/jpeg",
+        "image/webp"
+    };
+
     private readonly IDocumentService _documentService;
     private readonly ILogger<DocumentsController> _logger;
+    private readonly DocumentUploadOptions _uploadOptions;
+    private readonly IWebHostEnvironment _environment;
 
-    public DocumentsController(IDocumentService documentService, ILogger<DocumentsController> logger)
+    public DocumentsController(
+        IDocumentService documentService,
+        ILogger<DocumentsController> logger,
+        IOptions<DocumentUploadOptions> uploadOptions,
+        IWebHostEnvironment environment)
     {
         _documentService = documentService;
         _logger = logger;
+        _uploadOptions = uploadOptions.Value;
+        _environment = environment;
     }
 
-    /// <summary>
-    /// Get all documents
-    /// </summary>
     [HttpGet]
-    [ProducesResponseType(typeof(IEnumerable<DocumentDto>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<IEnumerable<DocumentDto>>> GetAllDocuments()
+    [ProducesResponseType(typeof(IEnumerable<DocumentListItemDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<IEnumerable<DocumentListItemDto>>> GetAllDocuments(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Fetching all documents");
-        var documents = await _documentService.GetAllDocumentsAsync();
+        var documents = await _documentService.GetRecentDocumentsAsync(cancellationToken);
         return Ok(documents);
     }
 
-    /// <summary>
-    /// Get a specific document by ID
-    /// </summary>
     [HttpGet("{id:guid}")]
-    [ProducesResponseType(typeof(DocumentDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(DocumentDetailDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<DocumentDto>> GetDocument(Guid id)
+    public async Task<ActionResult<DocumentDetailDto>> GetDocument(Guid id, CancellationToken cancellationToken)
     {
         try
         {
-            _logger.LogInformation("Fetching document with ID: {DocumentId}", id);
-            var document = await _documentService.GetDocumentAsync(id);
+            var document = await _documentService.GetDocumentAsync(id, cancellationToken);
             return Ok(document);
         }
         catch (KeyNotFoundException)
         {
-            _logger.LogWarning("Document not found with ID: {DocumentId}", id);
             return NotFound();
         }
     }
 
-    /// <summary>
-    /// Upload a new document
-    /// </summary>
-    [HttpPost]
-    [ProducesResponseType(typeof(DocumentDto), StatusCodes.Status201Created)]
+    [HttpPost("upload")]
+    [ProducesResponseType(typeof(UploadDocumentResponseDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<DocumentDto>> UploadDocument([FromForm] IFormFile file, [FromForm] string documentType = "Receipt")
+    public async Task<ActionResult<UploadDocumentResponseDto>> UploadDocument(
+        [FromForm] IFormFile? file,
+        [FromForm] string? documentType,
+        [FromForm] string? documentLanguage,
+        CancellationToken cancellationToken)
     {
-        if (file == null || file.Length == 0)
+        if (file == null)
         {
-            _logger.LogWarning("Upload attempt with no file");
-            return BadRequest("No file provided");
+            return BadRequest("File is required.");
         }
 
-        try
+        if (file.Length == 0)
         {
-            using var memoryStream = new MemoryStream();
-            await file.CopyToAsync(memoryStream);
+            return BadRequest("File cannot be empty.");
+        }
 
-            var createDto = new CreateDocumentDto
+        if (string.IsNullOrWhiteSpace(documentType))
+        {
+            return BadRequest("documentType is required.");
+        }
+
+        if (!TryMapDocumentType(documentType, out var mappedDocumentType))
+        {
+            return BadRequest("documentType must be 'receipt' or 'invoice'.");
+        }
+
+        var languageValue = string.IsNullOrWhiteSpace(documentLanguage) ? "auto" : documentLanguage;
+        if (!TryMapDocumentLanguage(languageValue, out var mappedDocumentLanguage))
+        {
+            return BadRequest("documentLanguage must be one of: auto, en-CA, fr-CA, bilingual-CA.");
+        }
+
+        if (!AllowedContentTypes.Contains(file.ContentType))
+        {
+            return BadRequest("Unsupported content type. Allowed: PDF, PNG, JPG, JPEG, WEBP.");
+        }
+
+        var maxBytes = (_uploadOptions.MaxFileSizeMb <= 0 ? 10 : _uploadOptions.MaxFileSizeMb) * 1024L * 1024L;
+        if (file.Length > maxBytes)
+        {
+            return BadRequest($"File size exceeds the maximum allowed size of {(_uploadOptions.MaxFileSizeMb <= 0 ? 10 : _uploadOptions.MaxFileSizeMb)} MB.");
+        }
+
+        var extension = ResolveExtension(file.FileName, file.ContentType);
+        if (string.IsNullOrEmpty(extension))
+        {
+            return BadRequest("Unable to resolve a valid file extension for the uploaded file.");
+        }
+
+        var safeStoredFileName = $"{Guid.NewGuid():N}{extension}";
+        var configuredRoot = string.IsNullOrWhiteSpace(_uploadOptions.RootFolder) ? Path.Combine("App_Data", "uploads") : _uploadOptions.RootFolder;
+        var storageRoot = Path.IsPathRooted(configuredRoot) ? configuredRoot : Path.Combine(_environment.ContentRootPath, configuredRoot);
+        Directory.CreateDirectory(storageRoot);
+
+        var physicalFilePath = Path.Combine(storageRoot, safeStoredFileName);
+        await using (var stream = new FileStream(physicalFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            await file.CopyToAsync(stream, cancellationToken);
+        }
+
+        var relativeStoragePath = Path.Combine(configuredRoot, safeStoredFileName);
+
+        var requestDto = new UploadDocumentRequestDto
+        {
+            OriginalFileName = Path.GetFileName(file.FileName),
+            StoredFileName = safeStoredFileName,
+            StoragePath = relativeStoragePath,
+            ContentType = file.ContentType,
+            FileExtension = extension,
+            FileSizeBytes = file.Length,
+            DocumentType = mappedDocumentType,
+            DocumentLanguage = mappedDocumentLanguage
+        };
+
+        var response = await _documentService.UploadDocumentAsync(requestDto, cancellationToken);
+        _logger.LogInformation("Document uploaded {DocumentId}", response.DocumentId);
+        return CreatedAtAction(nameof(GetDocument), new { id = response.DocumentId }, response);
+    }
+
+    private static bool TryMapDocumentType(string value, out DocumentType documentType)
+    {
+        if (string.Equals(value, "receipt", StringComparison.OrdinalIgnoreCase))
+        {
+            documentType = DocumentType.Receipt;
+            return true;
+        }
+
+        if (string.Equals(value, "invoice", StringComparison.OrdinalIgnoreCase))
+        {
+            documentType = DocumentType.Invoice;
+            return true;
+        }
+
+        documentType = DocumentType.Unknown;
+        return false;
+    }
+
+    private static bool TryMapDocumentLanguage(string value, out DocumentLanguage documentLanguage)
+    {
+        if (string.Equals(value, "auto", StringComparison.OrdinalIgnoreCase))
+        {
+            documentLanguage = DocumentLanguage.Unknown;
+            return true;
+        }
+
+        if (string.Equals(value, "en-CA", StringComparison.OrdinalIgnoreCase))
+        {
+            documentLanguage = DocumentLanguage.EnglishCanada;
+            return true;
+        }
+
+        if (string.Equals(value, "fr-CA", StringComparison.OrdinalIgnoreCase))
+        {
+            documentLanguage = DocumentLanguage.FrenchCanada;
+            return true;
+        }
+
+        if (string.Equals(value, "bilingual-CA", StringComparison.OrdinalIgnoreCase))
+        {
+            documentLanguage = DocumentLanguage.BilingualCanada;
+            return true;
+        }
+
+        documentLanguage = DocumentLanguage.Unknown;
+        return false;
+    }
+
+    private static string ResolveExtension(string originalFileName, string contentType)
+    {
+        var extension = Path.GetExtension(originalFileName);
+        if (!string.IsNullOrWhiteSpace(extension))
+        {
+            var normalized = extension.ToLowerInvariant();
+            if (normalized is ".pdf" or ".png" or ".jpg" or ".jpeg" or ".webp")
             {
-                FileName = file.FileName,
-                ContentType = file.ContentType ?? "application/octet-stream",
-                FileContent = memoryStream.ToArray(),
-                Type = documentType
-            };
-
-            _logger.LogInformation("Uploading document: {FileName}", file.FileName);
-            var result = await _documentService.UploadDocumentAsync(createDto);
-            return CreatedAtAction(nameof(GetDocument), new { id = result.Id }, result);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error uploading document");
-            return BadRequest("Failed to upload document");
-        }
-    }
-
-    /// <summary>
-    /// Update document (e.g., add extracted data)
-    /// </summary>
-    [HttpPut("{id:guid}")]
-    [ProducesResponseType(typeof(DocumentDto), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<DocumentDto>> UpdateDocument(Guid id, [FromBody] UpdateDocumentDto updateDto)
-    {
-        try
-        {
-            _logger.LogInformation("Updating document with ID: {DocumentId}", id);
-            var result = await _documentService.UpdateDocumentAsync(id, updateDto);
-            return Ok(result);
-        }
-        catch (KeyNotFoundException)
-        {
-            _logger.LogWarning("Document not found for update with ID: {DocumentId}", id);
-            return NotFound();
-        }
-    }
-
-    /// <summary>
-    /// Delete a document
-    /// </summary>
-    [HttpDelete("{id:guid}")]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> DeleteDocument(Guid id)
-    {
-        var result = await _documentService.DeleteDocumentAsync(id);
-        if (!result)
-        {
-            _logger.LogWarning("Document not found for deletion with ID: {DocumentId}", id);
-            return NotFound();
+                return normalized;
+            }
         }
 
-        _logger.LogInformation("Document deleted with ID: {DocumentId}", id);
-        return NoContent();
-    }
-
-    /// <summary>
-    /// Get documents by status
-    /// </summary>
-    [HttpGet("status/{status}")]
-    [ProducesResponseType(typeof(IEnumerable<DocumentDto>), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<IEnumerable<DocumentDto>>> GetDocumentsByStatus(string status)
-    {
-        try
+        return contentType.ToLowerInvariant() switch
         {
-            _logger.LogInformation("Fetching documents with status: {Status}", status);
-            var documents = await _documentService.GetDocumentsByStatusAsync(status);
-            return Ok(documents);
-        }
-        catch (ArgumentException ex)
-        {
-            _logger.LogWarning(ex, "Invalid status filter: {Status}", status);
-            return BadRequest(ex.Message);
-        }
+            "application/pdf" => ".pdf",
+            "image/png" => ".png",
+            "image/jpeg" => ".jpg",
+            "image/webp" => ".webp",
+            _ => string.Empty
+        };
     }
 }

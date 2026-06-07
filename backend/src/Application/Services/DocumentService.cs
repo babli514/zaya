@@ -1,118 +1,98 @@
 using FinancialOCR.Application.DTOs;
 using FinancialOCR.Domain.Entities;
-using FinancialOCR.Domain.Interfaces;
+using FinancialOCR.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 
 namespace FinancialOCR.Application.Services;
 
 public interface IDocumentService
 {
-    Task<DocumentDto> GetDocumentAsync(Guid id);
-    Task<IEnumerable<DocumentDto>> GetAllDocumentsAsync();
-    Task<DocumentDto> UploadDocumentAsync(CreateDocumentDto createDto);
-    Task<DocumentDto> UpdateDocumentAsync(Guid id, UpdateDocumentDto updateDto);
-    Task<bool> DeleteDocumentAsync(Guid id);
-    Task<IEnumerable<DocumentDto>> GetDocumentsByStatusAsync(string status);
+    Task<UploadDocumentResponseDto> UploadDocumentAsync(UploadDocumentRequestDto requestDto, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<DocumentListItemDto>> GetRecentDocumentsAsync(CancellationToken cancellationToken = default);
+    Task<DocumentDetailDto> GetDocumentAsync(Guid id, CancellationToken cancellationToken = default);
 }
 
 public class DocumentService : IDocumentService
 {
-    private readonly IDocumentRepository _documentRepository;
+    private readonly AppDbContext _dbContext;
 
-    public DocumentService(IDocumentRepository documentRepository)
+    public DocumentService(AppDbContext dbContext)
     {
-        _documentRepository = documentRepository;
+        _dbContext = dbContext;
     }
 
-    public async Task<DocumentDto> GetDocumentAsync(Guid id)
+    public async Task<UploadDocumentResponseDto> UploadDocumentAsync(UploadDocumentRequestDto requestDto, CancellationToken cancellationToken = default)
     {
-        var document = await _documentRepository.GetByIdAsync(id);
-        if (document == null)
-        {
-            throw new KeyNotFoundException($"Document with ID {id} not found");
-        }
-
-        return MapToDto(document);
-    }
-
-    public async Task<IEnumerable<DocumentDto>> GetAllDocumentsAsync()
-    {
-        var documents = await _documentRepository.GetAllAsync();
-        return documents.Select(MapToDto);
-    }
-
-    public async Task<DocumentDto> UploadDocumentAsync(CreateDocumentDto createDto)
-    {
-        var documentType = Enum.Parse<DocumentType>(createDto.Type, ignoreCase: true);
         var document = new Document
         {
             Id = Guid.NewGuid(),
-            FileName = createDto.FileName,
-            ContentType = createDto.ContentType,
-            FileSizeBytes = createDto.FileContent.Length,
-            FileContent = createDto.FileContent,
-            Type = documentType,
-            Status = ProcessingStatus.Pending,
-            UploadedAt = DateTime.UtcNow
+            OriginalFileName = requestDto.OriginalFileName,
+            StoredFileName = requestDto.StoredFileName,
+            ContentType = requestDto.ContentType,
+            FileExtension = requestDto.FileExtension,
+            FileSizeBytes = requestDto.FileSizeBytes,
+            StoragePath = requestDto.StoragePath,
+            DocumentType = requestDto.DocumentType,
+            DocumentLanguage = requestDto.DocumentLanguage,
+            ProcessingStatus = ProcessingStatus.Uploaded,
+            UploadedAtUtc = DateTime.UtcNow
         };
 
-        var result = await _documentRepository.AddAsync(document);
-        return MapToDto(result);
+        _dbContext.Documents.Add(document);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return new UploadDocumentResponseDto
+        {
+            DocumentId = document.Id,
+            OriginalFileName = document.OriginalFileName ?? string.Empty,
+            DocumentType = document.DocumentType.ToString(),
+            DocumentLanguage = document.DocumentLanguage.ToString(),
+            Status = document.ProcessingStatus.ToString(),
+            UploadedAtUtc = document.UploadedAtUtc
+        };
     }
 
-    public async Task<DocumentDto> UpdateDocumentAsync(Guid id, UpdateDocumentDto updateDto)
+    public async Task<IReadOnlyList<DocumentListItemDto>> GetRecentDocumentsAsync(CancellationToken cancellationToken = default)
     {
-        var document = await _documentRepository.GetByIdAsync(id);
+        return await _dbContext.Documents
+            .AsNoTracking()
+            .OrderByDescending(d => d.UploadedAtUtc)
+            .Select(d => new DocumentListItemDto
+            {
+                Id = d.Id,
+                FileName = d.OriginalFileName ?? string.Empty,
+                DocumentType = d.DocumentType.ToString(),
+                DocumentLanguage = d.DocumentLanguage.ToString(),
+                Status = d.ProcessingStatus.ToString(),
+                UploadedAtUtc = d.UploadedAtUtc,
+                ProcessedAtUtc = d.ProcessedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<DocumentDetailDto> GetDocumentAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var document = await _dbContext.Documents
+            .AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == id, cancellationToken);
+
         if (document == null)
         {
             throw new KeyNotFoundException($"Document with ID {id} not found");
         }
 
-        if (!string.IsNullOrEmpty(updateDto.FileName))
-        {
-            document.FileName = updateDto.FileName;
-        }
-
-        if (updateDto.ExtractedData != null)
-        {
-            document.ExtractedData = updateDto.ExtractedData;
-            document.Status = ProcessingStatus.Completed;
-            document.ProcessedAt = DateTime.UtcNow;
-        }
-
-        var result = await _documentRepository.UpdateAsync(document);
-        return MapToDto(result);
-    }
-
-    public async Task<bool> DeleteDocumentAsync(Guid id)
-    {
-        return await _documentRepository.DeleteAsync(id);
-    }
-
-    public async Task<IEnumerable<DocumentDto>> GetDocumentsByStatusAsync(string status)
-    {
-        if (!Enum.TryParse<ProcessingStatus>(status, ignoreCase: true, out var statusEnum))
-        {
-            throw new ArgumentException($"Invalid status: {status}");
-        }
-
-        var documents = await _documentRepository.GetByStatusAsync(statusEnum);
-        return documents.Select(MapToDto);
-    }
-
-    private static DocumentDto MapToDto(Document document)
-    {
-        return new DocumentDto
+        return new DocumentDetailDto
         {
             Id = document.Id,
-            FileName = document.FileName,
+            OriginalFileName = document.OriginalFileName ?? string.Empty,
+            StoredFileName = document.StoredFileName ?? string.Empty,
             ContentType = document.ContentType,
             FileSizeBytes = document.FileSizeBytes,
-            Type = document.Type.ToString(),
-            Status = document.Status.ToString(),
-            UploadedAt = document.UploadedAt,
-            ProcessedAt = document.ProcessedAt,
-            ErrorMessage = document.ErrorMessage,
-            ExtractedData = document.ExtractedData
+            DocumentType = document.DocumentType.ToString(),
+            DocumentLanguage = document.DocumentLanguage.ToString(),
+            Status = document.ProcessingStatus.ToString(),
+            UploadedAtUtc = document.UploadedAtUtc,
+            ProcessedAtUtc = document.ProcessedAtUtc
         };
     }
 }
