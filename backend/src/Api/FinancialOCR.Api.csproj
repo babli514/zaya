@@ -17,8 +17,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Application\FinancialOCR.Application\FinancialOCR.Application.csproj" />
-    <ProjectReference Include="..\..\Infrastructure\FinancialOCR.Infrastructure\FinancialOCR.Infrastructure.csproj" />
+    <ProjectReference Include="..\Application\FinancialOCR.Application.csproj" />
+    <ProjectReference Include="..\Infrastructure\FinancialOCR.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

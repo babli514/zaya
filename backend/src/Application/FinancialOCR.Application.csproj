@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Domain\FinancialOCR.Domain\FinancialOCR.Domain.csproj" />
+    <ProjectReference Include="..\Domain\FinancialOCR.Domain.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
