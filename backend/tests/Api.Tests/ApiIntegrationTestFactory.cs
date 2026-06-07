@@ -33,6 +33,11 @@ public class ApiIntegrationTestFactory : WebApplicationFactory<Program>
                 options.MaxFileSizeMb = 10;
             });
 
+            services.PostConfigure<ApiSecurityOptions>(options =>
+            {
+                options.ApiKey = string.Empty;
+            });
+
             services.RemoveAll<IOcrProvider>();
             services.AddScoped<IOcrProvider, FakeNativePdfOcrProvider>();
             services.AddScoped<IOcrProvider, FakeTesseractOcrProvider>();

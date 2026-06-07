@@ -4,6 +4,7 @@ using FinancialOCR.Api.Middleware;
 using FinancialOCR.Api.Options;
 using FinancialOCR.Api.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -34,6 +35,8 @@ builder.Services.AddCors(options =>
             .AllowCredentials();
     });
 });
+
+builder.Services.Configure<ApiSecurityOptions>(builder.Configuration.GetSection(ApiSecurityOptions.SectionName));
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? "Server=(localdb)\\mssqllocaldb;Database=FinancialOCR;Trusted_Connection=true;";
@@ -81,6 +84,47 @@ if (app.Environment.IsDevelopment())
         c.RoutePrefix = string.Empty;
     });
 }
+
+var apiSecurityOptions = app.Services.GetRequiredService<IOptions<ApiSecurityOptions>>().Value;
+if (!string.IsNullOrWhiteSpace(apiSecurityOptions.ApiKey))
+{
+    app.Use(async (context, next) =>
+    {
+        var path = context.Request.Path;
+        var isHealthRequest = path.StartsWithSegments("/api/health", StringComparison.OrdinalIgnoreCase);
+        var isDevelopmentSwaggerRequest = app.Environment.IsDevelopment() && path.StartsWithSegments("/swagger", StringComparison.OrdinalIgnoreCase);
+
+        if (isHealthRequest || isDevelopmentSwaggerRequest)
+        {
+            await next();
+            return;
+        }
+
+        if (!context.Request.Headers.TryGetValue("X-API-Key", out var providedApiKey) ||
+            string.IsNullOrWhiteSpace(providedApiKey) ||
+            !string.Equals(providedApiKey.ToString(), apiSecurityOptions.ApiKey, StringComparison.Ordinal))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await context.Response.WriteAsJsonAsync(new { message = "Missing or invalid X-API-Key." });
+            return;
+        }
+
+        await next();
+    });
+}
+
+app.Use(async (context, next) =>
+{
+    var path = context.Request.Path;
+    if (path.StartsWithSegments("/App_Data", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWithSegments("/uploads", StringComparison.OrdinalIgnoreCase))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    await next();
+});
 
 app.UseSerilogRequestLogging();
 app.UseMiddleware<GlobalExceptionHandlingMiddleware>();

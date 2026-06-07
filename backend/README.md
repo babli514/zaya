@@ -4,6 +4,30 @@
 
 Base URL (local): `https://localhost:5001` or `http://localhost:5000`
 
+## MVP Security Mode (Option B: Simple API Key)
+
+API endpoints require the `X-API-Key` header when `ApiSecurity:ApiKey` is set.
+
+Configuration (`appsettings*.json`):
+
+```json
+{
+  "ApiSecurity": {
+    "ApiKey": "dev-local-api-key"
+  }
+}
+```
+
+Behavior:
+
+- Protected: all API routes under `/api/*`
+- Excluded from API key check:
+  - `GET /api/health`
+  - Swagger routes in Development (`/swagger/*`)
+- If key is missing/invalid, API returns `401 Unauthorized`.
+
+For production-like environments, set `ApiSecurity:ApiKey` via environment variables or secret manager.
+
 ### 1) Upload a document
 
 `POST /api/documents/upload` accepts `multipart/form-data`:
@@ -82,6 +106,12 @@ Supported Canadian tax labels normalized by the pipeline:
 - JSON: `GET /api/documents/{id}/export/json`
 - CSV: `GET /api/documents/{id}/export/csv`
 - Line items CSV: `GET /api/documents/{id}/export/line-items.csv`
+
+### 7) Download original uploaded file (document-id endpoint only)
+
+- File download: `GET /api/documents/{id}/file`
+- Uploaded files are not exposed as static web content.
+- Access to uploaded files must go through the document-id endpoint and API key checks.
 
 ## OCR and Extraction Configuration
 
@@ -201,6 +231,7 @@ dotnet user-secrets set "FinancialExtraction:GeminiFlashLite:ApiKey" "<your-key>
 
 ```bash
 curl -X POST "http://localhost:5000/api/documents/upload" \
+  -H "X-API-Key: dev-local-api-key" \
   -F "file=@./samples/receipt-en.pdf;type=application/pdf" \
   -F "documentType=receipt" \
   -F "documentLanguage=en-CA"
@@ -210,6 +241,7 @@ curl -X POST "http://localhost:5000/api/documents/upload" \
 
 ```bash
 curl -X POST "http://localhost:5000/api/documents/upload" \
+  -H "X-API-Key: dev-local-api-key" \
   -F "file=@./samples/recu-fr.jpg;type=image/jpeg" \
   -F "documentType=receipt" \
   -F "documentLanguage=fr-CA"
@@ -219,6 +251,7 @@ curl -X POST "http://localhost:5000/api/documents/upload" \
 
 ```bash
 curl -X POST "http://localhost:5000/api/documents/upload" \
+  -H "X-API-Key: dev-local-api-key" \
   -F "file=@./samples/invoice-bilingual.png;type=image/png" \
   -F "documentType=invoice" \
   -F "documentLanguage=bilingual-CA"
@@ -227,17 +260,20 @@ curl -X POST "http://localhost:5000/api/documents/upload" \
 ### Process document
 
 ```bash
-curl -X POST "http://localhost:5000/api/documents/{documentId}/process"
+curl -X POST "http://localhost:5000/api/documents/{documentId}/process" \
+  -H "X-API-Key: dev-local-api-key"
 ```
 
 ### Get result
 
 ```bash
-curl "http://localhost:5000/api/documents/{documentId}/result"
+curl "http://localhost:5000/api/documents/{documentId}/result" \
+  -H "X-API-Key: dev-local-api-key"
 ```
 
 ### Download CSV
 
 ```bash
-curl "http://localhost:5000/api/documents/{documentId}/export/csv" -o result.csv
+curl "http://localhost:5000/api/documents/{documentId}/export/csv" \
+  -H "X-API-Key: dev-local-api-key" -o result.csv
 ```

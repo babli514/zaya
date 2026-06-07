@@ -4,16 +4,78 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using FinancialOCR.Application.DTOs;
+using FinancialOCR.Api.Options;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Api.Tests;
 
 public class DocumentsApiIntegrationTests : IClassFixture<ApiIntegrationTestFactory>
 {
+    private readonly ApiIntegrationTestFactory _factory;
     private readonly HttpClient _client;
 
     public DocumentsApiIntegrationTests(ApiIntegrationTestFactory factory)
     {
+        _factory = factory;
         _client = factory.CreateClient();
+    }
+
+    [Fact]
+    public async Task ApiKey_Mode_Rejects_Protected_Endpoint_Without_Header()
+    {
+        using var client = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.PostConfigure<ApiSecurityOptions>(options =>
+                {
+                    options.ApiKey = "integration-test-key";
+                });
+            });
+        }).CreateClient();
+
+        var response = await client.GetAsync("/api/documents");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ApiKey_Mode_Allows_Protected_Endpoint_With_Valid_Header()
+    {
+        using var client = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.PostConfigure<ApiSecurityOptions>(options =>
+                {
+                    options.ApiKey = "integration-test-key";
+                });
+            });
+        }).CreateClient();
+        client.DefaultRequestHeaders.Add("X-API-Key", "integration-test-key");
+
+        var response = await client.GetAsync("/api/documents");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ApiKey_Mode_Allows_Health_Without_Header()
+    {
+        using var client = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.PostConfigure<ApiSecurityOptions>(options =>
+                {
+                    options.ApiKey = "integration-test-key";
+                });
+            });
+        }).CreateClient();
+
+        var response = await client.GetAsync("/api/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     [Fact]
