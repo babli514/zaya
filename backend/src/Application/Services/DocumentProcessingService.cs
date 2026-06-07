@@ -129,12 +129,19 @@ public class DocumentProcessingService : IDocumentProcessingService
 
             var extractionResult = await _financialFieldExtractor.ExtractAsync(extractionInput, cancellationToken);
             var validationResult = _financialDocumentValidator.Validate(extractionResult, document.DocumentType);
+            var allWarnings = new List<ValidationWarning>();
+            allWarnings.AddRange(validationResult.Warnings);
+            allWarnings.AddRange(ocrResult.Warnings.Select(w => new ValidationWarning
+            {
+                Code = "OCR_WARNING",
+                Message = w
+            }));
 
             extractionJob.PrimaryOcrEngine = ocrResult.OcrEngineType;
             extractionJob.DetectedLanguage = detectedLanguage;
             extractionJob.RawText = ocrResult.RawText;
             extractionJob.OverallConfidence = extractionResult.Confidence;
-            extractionJob.WarningsJson = JsonSerializer.Serialize(validationResult.Warnings);
+            extractionJob.WarningsJson = JsonSerializer.Serialize(allWarnings);
             extractionJob.Status = ExtractionJobStatus.Completed;
             extractionJob.CompletedAtUtc = DateTime.UtcNow;
 
