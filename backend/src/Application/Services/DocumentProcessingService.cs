@@ -91,8 +91,11 @@ public class DocumentProcessingService : IDocumentProcessingService
         try
         {
             var route = await _ocrRouter.SelectRouteAsync(document, cancellationToken);
-            var provider = _ocrProviders.FirstOrDefault(p => p.EngineType == route.OcrEngineType)
-                ?? _ocrProviders.First(p => p.EngineType == OcrEngineType.VisionFallback);
+            var provider = _ocrProviders.FirstOrDefault(p => p.EngineType == route.OcrEngineType);
+            if (provider == null)
+            {
+                throw new NotSupportedException($"No OCR provider registered for engine type '{route.OcrEngineType}'.");
+            }
 
             var ocrRequest = new OcrRequest
             {
