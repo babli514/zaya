@@ -48,16 +48,20 @@ public class OcrRouter : IOcrRouter
             OcrEngineType = engineType,
             RequestedDocumentLanguage = document.DocumentLanguage,
             DetectedLanguage = document.DocumentLanguage,
-            PreferredVisionProvider = vision.PreferredProvider,
+            PreferredVisionProvider = string.IsNullOrWhiteSpace(_ocrOptions.PreferredFallbackProvider)
+                ? vision.PreferredProvider
+                : _ocrOptions.PreferredFallbackProvider,
             ProviderName = providerName,
             ModelName = string.Empty,
-            UseVisionFallback = vision.FallbackEnabled,
+            IsPdf = isPdf,
+            IsImage = isImage,
+            EnableFallback = vision.FallbackEnabled,
             FallbackOcrEngineType = OcrEngineType.VisionFallback,
-            MinPrimaryOcrConfidence = vision.MinPrimaryOcrConfidence,
-            MinRawTextLength = vision.MinRawTextLength,
-            UseForLowConfidenceResults = vision.UseForLowConfidenceResults,
-            UseForValidationFailures = vision.UseForValidationFailures,
-            UseForScannedPdf = vision.UseForScannedPdf
+            MinimumOcrConfidence = _ocrOptions.MinimumOcrConfidence,
+            MinimumRawTextLength = _ocrOptions.MinimumRawTextLength,
+            EnableFallbackOnLowConfidence = _ocrOptions.EnableFallbackOnLowConfidence,
+            EnableFallbackOnValidationFailure = _ocrOptions.EnableFallbackOnValidationFailure,
+            AutoCompleteConfidenceThreshold = _ocrOptions.AutoCompleteConfidenceThreshold
         });
     }
 

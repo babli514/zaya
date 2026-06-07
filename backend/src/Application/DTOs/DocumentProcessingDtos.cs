@@ -10,13 +10,15 @@ public class OcrRouteDecision
     public string PreferredVisionProvider { get; set; } = string.Empty;
     public string ProviderName { get; set; } = string.Empty;
     public string ModelName { get; set; } = string.Empty;
-    public bool UseVisionFallback { get; set; }
+    public bool IsPdf { get; set; }
+    public bool IsImage { get; set; }
+    public bool EnableFallback { get; set; }
     public OcrEngineType FallbackOcrEngineType { get; set; } = OcrEngineType.Unknown;
-    public decimal MinPrimaryOcrConfidence { get; set; } = 0.75m;
-    public int MinRawTextLength { get; set; } = 80;
-    public bool UseForLowConfidenceResults { get; set; }
-    public bool UseForValidationFailures { get; set; }
-    public bool UseForScannedPdf { get; set; }
+    public decimal MinimumOcrConfidence { get; set; } = 0.75m;
+    public int MinimumRawTextLength { get; set; } = 80;
+    public bool EnableFallbackOnLowConfidence { get; set; }
+    public bool EnableFallbackOnValidationFailure { get; set; }
+    public decimal AutoCompleteConfidenceThreshold { get; set; } = 0.75m;
 }
 
 public class OcrRequest

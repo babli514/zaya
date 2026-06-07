@@ -123,16 +123,24 @@ public class DocumentProcessingService : IDocumentProcessingService
             extractionJob.PrimaryProviderName = primaryOcrResult.ProviderName;
             extractionJob.PrimaryModelName = primaryOcrResult.ModelName;
             extractionJob.PrimaryProviderLatencyMs = primaryOcrResult.ProviderLatencyMs;
+            extractionJob.FallbackUsed = false;
 
             var processing = await RunExtractionAndValidationAsync(document, primaryOcrResult, cancellationToken);
+            var processingWarnings = new List<string>();
 
-            if (ShouldUseFallback(route, primaryOcrResult, processing.ValidationResult))
+            var fallbackReason = ResolveFallbackReason(route, primaryOcrResult, processing.ValidationResult);
+            if (fallbackReason != null)
             {
-                await TryApplyFallbackAsync(document, route, extractionJob, processing, cancellationToken);
+                processingWarnings.Add($"Fallback attempted: {fallbackReason}");
+                var fallbackApplied = await TryApplyFallbackAsync(document, route, extractionJob, processing, cancellationToken);
+                if (!fallbackApplied)
+                {
+                    processingWarnings.Add("Fallback result was not selected.");
+                }
             }
 
-            var allWarnings = BuildWarnings(processing.ValidationResult, processing.OcrResult);
-            var finalConfidence = ApplyConfidenceAdjustment(processing.ExtractionResult.Confidence, processing.ValidationResult.ConfidenceAdjustment);
+            var allWarnings = BuildWarnings(processing.ValidationResult, processing.OcrResult, processingWarnings);
+            var finalConfidence = CalculateOverallConfidence(processing.ExtractionResult.Confidence, processing.OcrResult.Confidence, processing.ValidationResult.ConfidenceAdjustment);
             extractionJob.DetectedLanguage = processing.DetectedLanguage;
             extractionJob.RawText = processing.OcrResult.RawText;
             extractionJob.OverallConfidence = finalConfidence;
@@ -195,7 +203,10 @@ public class DocumentProcessingService : IDocumentProcessingService
 
             document.DocumentLanguage = processing.DetectedLanguage;
             var hasValidationIssues = processing.ValidationResult.Warnings.Any(w => w.Severity != ValidationSeverity.Info);
-            document.ProcessingStatus = processing.ValidationResult.IsValid && !hasValidationIssues && finalConfidence >= route.MinPrimaryOcrConfidence
+            document.ProcessingStatus = processing.ValidationResult.IsValid
+                && !hasValidationIssues
+                && finalConfidence.HasValue
+                && finalConfidence.Value >= route.AutoCompleteConfidenceThreshold
                 ? ProcessingStatus.Completed
                 : ProcessingStatus.NeedsReview;
             document.ProcessedAtUtc = DateTime.UtcNow;
@@ -260,33 +271,61 @@ public class DocumentProcessingService : IDocumentProcessingService
         };
     }
 
-    private static bool ShouldUseFallback(OcrRouteDecision route, OcrResult primaryResult, FinancialValidationResult validationResult)
+    private static string? ResolveFallbackReason(OcrRouteDecision route, OcrResult primaryResult, FinancialValidationResult validationResult)
     {
-        if (!route.UseVisionFallback)
+        if (!route.EnableFallback)
+        {
+            return null;
+        }
+
+        var rawLength = primaryResult.RawText.Count(ch => !char.IsWhiteSpace(ch));
+        if (rawLength < route.MinimumRawTextLength)
+        {
+            if (route.IsPdf)
+            {
+                return "pdf_raw_text_too_short";
+            }
+
+            if (route.IsImage)
+            {
+                return "image_raw_text_too_short";
+            }
+        }
+
+        if (route.IsImage && route.EnableFallbackOnLowConfidence)
+        {
+            var confidence = primaryResult.Confidence;
+            if (!confidence.HasValue || confidence.Value < route.MinimumOcrConfidence)
+            {
+                return "image_low_ocr_confidence";
+            }
+        }
+
+        if (route.EnableFallbackOnValidationFailure && HasBadValidationFailure(validationResult))
+        {
+            return "validation_failed_badly";
+        }
+
+        return null;
+    }
+
+    private static bool HasBadValidationFailure(FinancialValidationResult validationResult)
+    {
+        if (validationResult.IsValid)
         {
             return false;
         }
 
-        var nonWhitespaceLength = primaryResult.RawText.Count(ch => !char.IsWhiteSpace(ch));
-        var lowText = nonWhitespaceLength < route.MinRawTextLength;
-        var lowTextForScannedPdf = route.UseForScannedPdf
-            && primaryResult.OcrEngineType == OcrEngineType.NativePdfText
-            && lowText;
-        var lowTextForNonPdf = primaryResult.OcrEngineType != OcrEngineType.NativePdfText && lowText;
-        var lowConfidence = route.UseForLowConfidenceResults
-            && (!primaryResult.Confidence.HasValue || primaryResult.Confidence.Value < route.MinPrimaryOcrConfidence);
-        var validationFailed = route.UseForValidationFailures && !validationResult.IsValid;
-
-        return lowTextForScannedPdf || lowTextForNonPdf || lowConfidence || validationFailed;
+        return validationResult.Warnings.Any(w => w.Severity == ValidationSeverity.Error);
     }
 
-    private async Task TryApplyFallbackAsync(Document document, OcrRouteDecision route, ExtractionJob extractionJob, ProcessingAttempt primaryAttempt, CancellationToken cancellationToken)
+    private async Task<bool> TryApplyFallbackAsync(Document document, OcrRouteDecision route, ExtractionJob extractionJob, ProcessingAttempt primaryAttempt, CancellationToken cancellationToken)
     {
         var fallbackProvider = _ocrProviders.FirstOrDefault(p => p.EngineType == route.FallbackOcrEngineType)
             ?? _ocrProviders.FirstOrDefault(p => p.EngineType == OcrEngineType.VisionFallback);
         if (fallbackProvider == null)
         {
-            return;
+            return false;
         }
 
         var fallbackRequest = new OcrRequest
@@ -309,7 +348,6 @@ public class DocumentProcessingService : IDocumentProcessingService
             _logger.LogInformation("OCR fallback completed. DocumentId={DocumentId}, Provider={Provider}, LatencyMs={LatencyMs}", document.Id, fallbackOcrResult.ProviderName, fallbackOcrResult.ProviderLatencyMs);
 
             var fallbackAttempt = await RunExtractionAndValidationAsync(document, fallbackOcrResult, cancellationToken);
-            extractionJob.FallbackUsed = true;
             extractionJob.FallbackOcrEngine = fallbackOcrResult.OcrEngineType;
             extractionJob.FallbackProviderName = fallbackOcrResult.ProviderName;
             extractionJob.FallbackModelName = fallbackOcrResult.ModelName;
@@ -317,20 +355,28 @@ public class DocumentProcessingService : IDocumentProcessingService
 
             if (fallbackAttempt.ValidationResult.IsValid || !primaryAttempt.ValidationResult.IsValid)
             {
+                extractionJob.FallbackUsed = true;
                 primaryAttempt.OcrResult = fallbackAttempt.OcrResult;
                 primaryAttempt.ExtractionResult = fallbackAttempt.ExtractionResult;
                 primaryAttempt.ValidationResult = fallbackAttempt.ValidationResult;
                 primaryAttempt.DetectedLanguage = fallbackAttempt.DetectedLanguage;
+                return true;
             }
+
+            extractionJob.FallbackUsed = false;
+            return false;
         }
         catch (Exception ex)
         {
             _logger.LogWarning("OCR fallback failed. DocumentId={DocumentId}, Provider={Provider}, Message={Message}", document.Id, fallbackProvider.EngineType, ex.Message);
+            extractionJob.FallbackUsed = false;
+            return false;
         }
     }
 
-    private static decimal? ApplyConfidenceAdjustment(decimal? baseConfidence, decimal adjustment)
+    private static decimal? CalculateOverallConfidence(decimal? extractionConfidence, decimal? ocrConfidence, decimal adjustment)
     {
+        var baseConfidence = extractionConfidence ?? ocrConfidence;
         if (!baseConfidence.HasValue)
         {
             return null;
@@ -350,7 +396,7 @@ public class DocumentProcessingService : IDocumentProcessingService
         return adjusted;
     }
 
-    private static List<ValidationWarning> BuildWarnings(FinancialValidationResult validationResult, OcrResult ocrResult)
+    private static List<ValidationWarning> BuildWarnings(FinancialValidationResult validationResult, OcrResult ocrResult, IReadOnlyCollection<string>? processWarnings = null)
     {
         var allWarnings = new List<ValidationWarning>();
         allWarnings.AddRange(validationResult.Warnings);
@@ -361,6 +407,18 @@ public class DocumentProcessingService : IDocumentProcessingService
             MessageFr = w,
             Severity = ValidationSeverity.Warning
         }));
+
+        if (processWarnings != null)
+        {
+            allWarnings.AddRange(processWarnings.Select(w => new ValidationWarning
+            {
+                Code = "OCR_ROUTING",
+                MessageEn = w,
+                MessageFr = w,
+                Severity = ValidationSeverity.Info
+            }));
+        }
+
         return allWarnings;
     }
 }

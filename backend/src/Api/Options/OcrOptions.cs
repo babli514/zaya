@@ -10,6 +10,12 @@ public class OcrOptions
     public string EnglishLanguage { get; set; } = "eng";
     public string FrenchLanguage { get; set; } = "fra";
     public string BilingualLanguage { get; set; } = "eng+fra";
+    public string PreferredFallbackProvider { get; set; } = "GeminiFlashLite";
+    public bool EnableFallbackOnLowConfidence { get; set; } = true;
+    public bool EnableFallbackOnValidationFailure { get; set; } = true;
+    public decimal MinimumOcrConfidence { get; set; } = 0.75m;
+    public int MinimumRawTextLength { get; set; } = 80;
+    public decimal AutoCompleteConfidenceThreshold { get; set; } = 0.75m;
     public VisionOcrOptions VisionOcr { get; set; } = new();
 }
 
@@ -17,11 +23,6 @@ public class VisionOcrOptions
 {
     public string PreferredProvider { get; set; } = "GeminiFlashLite";
     public bool FallbackEnabled { get; set; } = true;
-    public bool UseForScannedPdf { get; set; } = true;
-    public bool UseForLowConfidenceResults { get; set; } = true;
-    public bool UseForValidationFailures { get; set; } = true;
-    public decimal MinPrimaryOcrConfidence { get; set; } = 0.75m;
-    public int MinRawTextLength { get; set; } = 80;
     public GeminiFlashLiteOptions GeminiFlashLite { get; set; } = new();
 }
 
