@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 
 export type UploadDocumentType = 'receipt' | 'invoice';
 export type UploadDocumentLanguage = 'auto' | 'en-CA' | 'fr-CA' | 'bilingual-CA';
+export type DetectedLanguageValue = 'Unknown' | 'EnglishCanada' | 'FrenchCanada' | 'BilingualCanada';
 
 export interface DocumentDetailDto {
   id: string;
@@ -41,6 +42,39 @@ export interface ExtractionJobResultDto {
   errorMessage?: string | null;
 }
 
+export interface ExtractedFieldsDto {
+  vendorName: string;
+  customerName?: string | null;
+  documentNumber?: string | null;
+  documentDate?: string | null;
+  dueDate?: string | null;
+  currency: string;
+  subtotal?: number | null;
+  gst?: number | null;
+  qst?: number | null;
+  hst?: number | null;
+  pst?: number | null;
+  tip?: number | null;
+  total?: number | null;
+}
+
+export interface UpdateExtractedFieldsRequestDto {
+  vendorName?: string | null;
+  customerName?: string | null;
+  documentNumber?: string | null;
+  documentDate?: string | null;
+  dueDate?: string | null;
+  currency?: string | null;
+  subtotal?: number | null;
+  gst?: number | null;
+  qst?: number | null;
+  hst?: number | null;
+  pst?: number | null;
+  tip?: number | null;
+  total?: number | null;
+  detectedLanguage?: DetectedLanguageValue;
+}
+
 export interface DocumentResultDto {
   document: {
     id: string;
@@ -56,7 +90,7 @@ export interface DocumentResultDto {
   detectedDocumentLanguage: string;
   latestExtractionJob?: ExtractionJobResultDto | null;
   rawText: string;
-  structuredExtractedFields?: Record<string, unknown> | null;
+  structuredExtractedFields?: ExtractedFieldsDto | null;
   lineItems: Array<Record<string, unknown>>;
   validationResult?: ValidationResultSummaryDto | null;
   bilingualWarnings: ValidationWarningDto[];
@@ -102,6 +136,10 @@ export class DocumentService {
 
   getRawText(id: string): Observable<DocumentRawTextDto> {
     return this.http.get<DocumentRawTextDto>(`${this.apiUrl}/${id}/raw-text`);
+  }
+
+  updateExtractedFields(id: string, request: UpdateExtractedFieldsRequestDto): Observable<DocumentResultDto> {
+    return this.http.put<DocumentResultDto>(`${this.apiUrl}/${id}/extracted-fields`, request);
   }
 
   uploadDocument(file: File, documentType: UploadDocumentType, documentLanguage: UploadDocumentLanguage): Observable<HttpEvent<UploadDocumentResponseDto>> {
