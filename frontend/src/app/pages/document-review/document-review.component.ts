@@ -1,7 +1,8 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterModule, ActivatedRoute } from '@angular/router';
-import { DocumentService, DocumentDto } from '../../services/document.service';
+import { ActivatedRoute, RouterModule } from '@angular/router';
+import { catchError, of } from 'rxjs';
+import { DocumentDetailDto, DocumentResultDto, DocumentService } from '../../services/document.service';
 
 @Component({
   selector: 'app-document-review',
@@ -13,27 +14,27 @@ import { DocumentService, DocumentDto } from '../../services/document.service';
 
       <div *ngIf="!loading && document" class="review-section">
         <div class="header">
-          <h1>Review {{ document.fileName }}</h1>
-          <a routerLink="/documents/{{ document.id }}" class="btn btn-secondary">Back to Document</a>
+          <h1>Review {{ document.originalFileName }}</h1>
+          <a [routerLink]="['/documents', document.id]" class="btn btn-secondary">Back to Document</a>
         </div>
 
         <div class="overview">
           <p><strong>Status:</strong> {{ document.status }}</p>
-          <p><strong>Type:</strong> {{ document.type }}</p>
-          <p><strong>Uploaded:</strong> {{ document.uploadedAt | date:'medium' }}</p>
+          <p><strong>Type:</strong> {{ document.documentType }}</p>
+          <p><strong>Uploaded:</strong> {{ document.uploadedAtUtc | date:'medium' }}</p>
         </div>
 
-        <div *ngIf="document.extractedData && objectKeys(document.extractedData).length > 0" class="extracted-data">
+        <div *ngIf="result?.structuredExtractedFields && objectKeys(result.structuredExtractedFields).length > 0" class="extracted-data">
           <h2>Extracted Data</h2>
           <div class="data-grid">
-            <div *ngFor="let key of objectKeys(document.extractedData)" class="data-item">
+            <div *ngFor="let key of objectKeys(result.structuredExtractedFields)" class="data-item">
               <label>{{ key }}</label>
-              <p>{{ document.extractedData[key] }}</p>
+              <p>{{ result.structuredExtractedFields[key] }}</p>
             </div>
           </div>
         </div>
 
-        <div *ngIf="!document.extractedData || objectKeys(document.extractedData).length === 0" class="empty-state">
+        <div *ngIf="!result?.structuredExtractedFields || objectKeys(result.structuredExtractedFields).length === 0" class="empty-state">
           <p>No extracted data is available yet for this document.</p>
         </div>
       </div>
@@ -139,15 +140,16 @@ import { DocumentService, DocumentDto } from '../../services/document.service';
   `]
 })
 export class DocumentReviewComponent implements OnInit {
-  document: DocumentDto | null = null;
+  document: DocumentDetailDto | null = null;
+  result: DocumentResultDto | null = null;
   loading = true;
 
   constructor(
-    private documentService: DocumentService,
-    private route: ActivatedRoute
+    private readonly documentService: DocumentService,
+    private readonly route: ActivatedRoute
   ) {}
 
-  ngOnInit() {
+  ngOnInit(): void {
     this.route.params.subscribe((params) => {
       const id = params['id'];
       if (id) {
@@ -156,21 +158,24 @@ export class DocumentReviewComponent implements OnInit {
     });
   }
 
-  loadDocument(id: string) {
+  loadDocument(id: string): void {
     this.loading = true;
     this.documentService.getDocument(id).subscribe({
       next: (value) => {
         this.document = value;
         this.loading = false;
       },
-      error: (err) => {
-        console.error('Failed to load document review', err);
+      error: () => {
         this.loading = false;
       }
     });
+
+    this.documentService.getDocumentResult(id).pipe(catchError(() => of(null))).subscribe((value) => {
+      this.result = value;
+    });
   }
 
-  objectKeys(value: Record<string, unknown>) {
+  objectKeys(value: Record<string, unknown>): string[] {
     return Object.keys(value);
   }
 }

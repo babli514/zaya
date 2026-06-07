@@ -5,17 +5,72 @@ import { Observable } from 'rxjs';
 export type UploadDocumentType = 'receipt' | 'invoice';
 export type UploadDocumentLanguage = 'auto' | 'en-CA' | 'fr-CA' | 'bilingual-CA';
 
-export interface DocumentDto {
+export interface DocumentDetailDto {
   id: string;
-  fileName: string;
+  originalFileName: string;
+  storedFileName: string;
   contentType: string;
   fileSizeBytes: number;
-  type: string;
+  documentType: string;
+  documentLanguage: string;
   status: string;
-  uploadedAt: string;
-  processedAt?: string;
-  errorMessage?: string;
-  extractedData: Record<string, unknown>;
+  uploadedAtUtc: string;
+  processedAtUtc?: string | null;
+}
+
+export type DocumentDto = DocumentDetailDto;
+
+export interface ValidationWarningDto {
+  code: string;
+  messageEn: string;
+  messageFr: string;
+  severity: string;
+  fieldName?: string | null;
+}
+
+export interface ValidationResultSummaryDto {
+  isValidated: boolean;
+  summary: string;
+}
+
+export interface ExtractionJobResultDto {
+  id: string;
+  startedAtUtc: string;
+  completedAtUtc?: string | null;
+  status: string;
+  errorMessage?: string | null;
+}
+
+export interface DocumentResultDto {
+  document: {
+    id: string;
+    originalFileName: string;
+    storedFileName: string;
+    contentType: string;
+    documentType: string;
+    status: string;
+    uploadedAtUtc: string;
+    processedAtUtc?: string | null;
+  };
+  requestedDocumentLanguage: string;
+  detectedDocumentLanguage: string;
+  latestExtractionJob?: ExtractionJobResultDto | null;
+  rawText: string;
+  structuredExtractedFields?: Record<string, unknown> | null;
+  lineItems: Array<Record<string, unknown>>;
+  validationResult?: ValidationResultSummaryDto | null;
+  bilingualWarnings: ValidationWarningDto[];
+  confidence?: number | null;
+  primaryOcrEngineUsed: string;
+  fallbackOcrEngineUsed?: string | null;
+  fallbackUsed: boolean;
+  providerName?: string | null;
+  modelName?: string | null;
+  providerLatencyMs?: number | null;
+}
+
+export interface DocumentRawTextDto {
+  rawText: string;
 }
 
 export interface UploadDocumentResponseDto {
@@ -31,14 +86,22 @@ export interface UploadDocumentResponseDto {
 export class DocumentService {
   private readonly apiUrl = '/api/documents';
 
-  constructor(private http: HttpClient) {}
+  constructor(private readonly http: HttpClient) {}
 
   getAllDocuments(): Observable<DocumentDto[]> {
     return this.http.get<DocumentDto[]>(this.apiUrl);
   }
 
-  getDocument(id: string): Observable<DocumentDto> {
-    return this.http.get<DocumentDto>(`${this.apiUrl}/${id}`);
+  getDocument(id: string): Observable<DocumentDetailDto> {
+    return this.http.get<DocumentDetailDto>(`${this.apiUrl}/${id}`);
+  }
+
+  getDocumentResult(id: string): Observable<DocumentResultDto> {
+    return this.http.get<DocumentResultDto>(`${this.apiUrl}/${id}/result`);
+  }
+
+  getRawText(id: string): Observable<DocumentRawTextDto> {
+    return this.http.get<DocumentRawTextDto>(`${this.apiUrl}/${id}/raw-text`);
   }
 
   uploadDocument(file: File, documentType: UploadDocumentType, documentLanguage: UploadDocumentLanguage): Observable<HttpEvent<UploadDocumentResponseDto>> {
@@ -53,11 +116,19 @@ export class DocumentService {
     });
   }
 
-  processDocument(id: string): Observable<DocumentDto> {
-    return this.http.post<DocumentDto>(`${this.apiUrl}/${id}/process`, {});
+  processDocument(id: string): Observable<DocumentDetailDto> {
+    return this.http.post<DocumentDetailDto>(`${this.apiUrl}/${id}/process`, {});
   }
 
-  deleteDocument(id: string) {
+  getJsonExportUrl(id: string): string {
+    return `${this.apiUrl}/${id}/export/json`;
+  }
+
+  getCsvExportUrl(id: string): string {
+    return `${this.apiUrl}/${id}/export/csv`;
+  }
+
+  deleteDocument(id: string): Observable<void> {
     return this.http.delete<void>(`${this.apiUrl}/${id}`);
   }
 }
