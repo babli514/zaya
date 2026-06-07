@@ -46,7 +46,67 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.Configure<DocumentUploadOptions>(builder.Configuration.GetSection(DocumentUploadOptions.SectionName));
 builder.Services.Configure<OcrOptions>(builder.Configuration.GetSection(OcrOptions.SectionName));
+builder.Services.PostConfigure<OcrOptions>(options =>
+{
+    var ocrUseOpenAi = Environment.GetEnvironmentVariable("OCR_USE_OPENAI");
+    var extractionUseOpenAi = Environment.GetEnvironmentVariable("FINANCIAL_EXTRACTION_USE_OPENAI");
+    var useOpenAi = string.Equals(ocrUseOpenAi, "true", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(extractionUseOpenAi, "true", StringComparison.OrdinalIgnoreCase);
+    if (!useOpenAi)
+    {
+        return;
+    }
+
+    options.PreferredFallbackProvider = "GeminiFlashLite";
+    options.VisionOcr.PreferredProvider = "GeminiFlashLite";
+    options.VisionOcr.GeminiFlashLite.Enabled = true;
+    options.VisionOcr.GeminiFlashLite.UseOpenAICompatibility = true;
+    options.VisionOcr.GeminiFlashLite.ProviderName = "OpenAI";
+
+    var openAiModel = Environment.GetEnvironmentVariable("OPENAI_MODEL");
+    options.VisionOcr.GeminiFlashLite.OpenAIModel = string.IsNullOrWhiteSpace(openAiModel) ? "gpt-4o" : openAiModel;
+
+    var openAiApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+    if (!string.IsNullOrWhiteSpace(openAiApiKey))
+    {
+        options.VisionOcr.GeminiFlashLite.OpenAIApiKey = openAiApiKey;
+    }
+
+    var openAiBaseUrl = Environment.GetEnvironmentVariable("OPENAI_BASE_URL");
+    if (!string.IsNullOrWhiteSpace(openAiBaseUrl))
+    {
+        options.VisionOcr.GeminiFlashLite.OpenAIEndpoint = openAiBaseUrl;
+    }
+});
 builder.Services.Configure<FinancialExtractionOptions>(builder.Configuration.GetSection(FinancialExtractionOptions.SectionName));
+builder.Services.PostConfigure<FinancialExtractionOptions>(options =>
+{
+    var useOpenAi = Environment.GetEnvironmentVariable("FINANCIAL_EXTRACTION_USE_OPENAI");
+    if (!string.Equals(useOpenAi, "true", StringComparison.OrdinalIgnoreCase))
+    {
+        return;
+    }
+
+    options.Mode = "GeminiFlashLite";
+    options.GeminiFlashLite.Enabled = true;
+    options.GeminiFlashLite.UseOpenAICompatibility = true;
+    options.GeminiFlashLite.ProviderName = "OpenAI";
+
+    var openAiModel = Environment.GetEnvironmentVariable("OPENAI_MODEL");
+    options.GeminiFlashLite.OpenAIModel = string.IsNullOrWhiteSpace(openAiModel) ? "gpt-4o" : openAiModel;
+
+    var openAiApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+    if (!string.IsNullOrWhiteSpace(openAiApiKey))
+    {
+        options.GeminiFlashLite.OpenAIApiKey = openAiApiKey;
+    }
+
+    var openAiBaseUrl = Environment.GetEnvironmentVariable("OPENAI_BASE_URL");
+    if (!string.IsNullOrWhiteSpace(openAiBaseUrl))
+    {
+        options.GeminiFlashLite.OpenAIEndpoint = openAiBaseUrl;
+    }
+});
 builder.Services.Configure<ProviderUsageOptions>(builder.Configuration.GetSection(ProviderUsageOptions.SectionName));
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<IDocumentProcessingService, DocumentProcessingService>();

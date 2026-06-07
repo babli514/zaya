@@ -33,6 +33,10 @@ public class GeminiFlashLiteOptions
     public string Model { get; set; } = "CONFIGURE_ACTUAL_MODEL_ID_HERE";
     public string ApiKey { get; set; } = string.Empty;
     public string Endpoint { get; set; } = string.Empty;
+    public bool UseOpenAICompatibility { get; set; }
+    public string OpenAIModel { get; set; } = string.Empty;
+    public string OpenAIApiKey { get; set; } = string.Empty;
+    public string OpenAIEndpoint { get; set; } = string.Empty;
     public int TimeoutSeconds { get; set; } = 60;
     public int MaxRetries { get; set; } = 2;
 }

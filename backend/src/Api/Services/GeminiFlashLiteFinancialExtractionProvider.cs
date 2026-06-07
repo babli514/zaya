@@ -17,6 +17,7 @@ public class GeminiFlashLiteFinancialExtractionProvider : IStructuredFinancialEx
     protected sealed record GeminiUsageMetadata(int? InputTokenCount, int? OutputTokenCount, long? OutputBytes);
     private const string PlaceholderModel = "CONFIGURE_ACTUAL_MODEL_ID_HERE";
     private const string DefaultEndpoint = "https://generativelanguage.googleapis.com/v1beta/models";
+    private const string DefaultOpenAIEndpoint = "https://api.openai.com/v1";
     private readonly FinancialExtractionOptions _options;
     private readonly IFinancialDocumentValidator _validator;
     private readonly IProviderUsageTracker _providerUsageTracker;
@@ -28,9 +29,9 @@ public class GeminiFlashLiteFinancialExtractionProvider : IStructuredFinancialEx
         _validator = validator ?? new FinancialDocumentValidator();
     }
 
-    public string ProviderName => string.IsNullOrWhiteSpace(_options.GeminiFlashLite.ProviderName)
-        ? "GoogleGemini"
-        : _options.GeminiFlashLite.ProviderName;
+    public string ProviderName => _options.GeminiFlashLite.UseOpenAICompatibility
+        ? ResolveOpenAiProviderName(_options.GeminiFlashLite.ProviderName)
+        : (string.IsNullOrWhiteSpace(_options.GeminiFlashLite.ProviderName) ? "GoogleGemini" : _options.GeminiFlashLite.ProviderName);
 
     public async Task<FinancialExtractionResult> ExtractAsync(FinancialExtractionInput input, CancellationToken cancellationToken)
     {
@@ -42,26 +43,31 @@ public class GeminiFlashLiteFinancialExtractionProvider : IStructuredFinancialEx
             throw new NotSupportedException("Gemini Flash Lite structured extraction provider is disabled.");
         }
 
-        if (string.IsNullOrWhiteSpace(settings.ApiKey) || string.IsNullOrWhiteSpace(settings.Model) || string.Equals(settings.Model, PlaceholderModel, StringComparison.Ordinal))
+        var useOpenAi = settings.UseOpenAICompatibility;
+        var modelName = useOpenAi ? settings.OpenAIModel : settings.Model;
+        var apiKey = useOpenAi ? settings.OpenAIApiKey : settings.ApiKey;
+
+        if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(modelName) || string.Equals(modelName, PlaceholderModel, StringComparison.Ordinal))
         {
-            throw new InvalidOperationException("Gemini Flash Lite structured extraction provider is enabled but missing required configuration values: ApiKey and/or Model.");
+            throw new InvalidOperationException("Gemini Flash Lite structured extraction provider is enabled but missing required configuration values for the active compatibility mode.");
         }
 
-        var endpoint = BuildEndpoint(settings.Endpoint, settings.Model);
         var prompt = BuildStructuredPrompt(input.RequestedDocumentLanguage, input.DetectedLanguage, input.DocumentType, input.RawText);
         var timeoutSeconds = settings.TimeoutSeconds <= 0 ? 60 : settings.TimeoutSeconds;
         var maxRetries = Math.Max(0, settings.MaxRetries);
-        var requestPayload = BuildRequestPayload(prompt);
+        var requestPayload = useOpenAi ? BuildOpenAiRequestPayload(modelName, prompt) : BuildRequestPayload(prompt);
         var startedAtUtc = DateTime.UtcNow;
         var stopwatch = Stopwatch.StartNew();
         var providerName = ProviderName;
-        var usageRecord = await _providerUsageTracker.StartAsync(input.DocumentId, input.ExtractionJobId, providerName, settings.Model, ProviderOperationType.StructuredExtraction, startedAtUtc, cancellationToken);
+        var usageRecord = await _providerUsageTracker.StartAsync(input.DocumentId, input.ExtractionJobId, providerName, modelName, ProviderOperationType.StructuredExtraction, startedAtUtc, cancellationToken);
 
         try
         {
-            var response = await SendGeminiRequestAsync(endpoint, settings.ApiKey, requestPayload, timeoutSeconds, maxRetries, cancellationToken);
+            var response = useOpenAi
+                ? await SendOpenAiRequestAsync(BuildOpenAiEndpoint(settings.OpenAIEndpoint), apiKey, requestPayload, timeoutSeconds, maxRetries, cancellationToken)
+                : await SendGeminiRequestAsync(BuildEndpoint(settings.Endpoint, modelName), apiKey, requestPayload, timeoutSeconds, maxRetries, cancellationToken);
             var responseBody = response.ResponseBody;
-            var jsonText = ExtractResponseText(responseBody);
+            var jsonText = useOpenAi ? ExtractOpenAiResponseText(responseBody) : ExtractResponseText(responseBody);
             if (string.IsNullOrWhiteSpace(jsonText))
             {
                 throw new InvalidOperationException("Gemini structured extraction returned empty JSON content.");
@@ -86,7 +92,7 @@ public class GeminiFlashLiteFinancialExtractionProvider : IStructuredFinancialEx
 
             stopwatch.Stop();
             var inputBytes = Encoding.UTF8.GetByteCount(input.RawText);
-            var estimatedCostUsd = _providerUsageTracker.EstimateCostUsd(settings.Model, response.UsageMetadata.InputTokenCount, response.UsageMetadata.OutputTokenCount);
+            var estimatedCostUsd = _providerUsageTracker.EstimateCostUsd(modelName, response.UsageMetadata.InputTokenCount, response.UsageMetadata.OutputTokenCount);
             await _providerUsageTracker.CompleteSuccessAsync(
                 usageRecord,
                 DateTime.UtcNow,
@@ -99,7 +105,7 @@ public class GeminiFlashLiteFinancialExtractionProvider : IStructuredFinancialEx
                 cancellationToken);
 
             normalized.ProviderName = providerName;
-            normalized.ModelName = settings.Model;
+            normalized.ModelName = modelName;
             normalized.ProviderLatencyMs = stopwatch.ElapsedMilliseconds;
             normalized.ProviderCostEstimate = estimatedCostUsd;
 
@@ -201,6 +207,73 @@ public class GeminiFlashLiteFinancialExtractionProvider : IStructuredFinancialEx
             || statusCode == HttpStatusCode.GatewayTimeout;
     }
 
+    protected virtual async Task<(string ResponseBody, GeminiUsageMetadata UsageMetadata)> SendOpenAiRequestAsync(Uri endpoint, string apiKey, string requestJson, int timeoutSeconds, int maxRetries, CancellationToken cancellationToken)
+    {
+        using var httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(timeoutSeconds)
+        };
+
+        Exception? lastException = null;
+        var totalAttempts = maxRetries + 1;
+        for (var attempt = 1; attempt <= totalAttempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint)
+                {
+                    Content = new StringContent(requestJson, Encoding.UTF8, "application/json")
+                };
+                requestMessage.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+                using var response = await httpClient.SendAsync(requestMessage, cancellationToken);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                if (!response.IsSuccessStatusCode)
+                {
+                    if (attempt < totalAttempts && IsTransientStatus(response.StatusCode))
+                    {
+                        var delayMs = (int)Math.Min(3000, 250 * Math.Pow(2, attempt - 1));
+                        await Task.Delay(delayMs, cancellationToken);
+                        continue;
+                    }
+
+                    if ((int)response.StatusCode == 429)
+                    {
+                        throw new InvalidOperationException("OpenAI structured extraction was rate-limited. Please retry later.");
+                    }
+
+                    throw new InvalidOperationException($"OpenAI structured extraction failed with status code {(int)response.StatusCode}.");
+                }
+
+                return (body, ExtractOpenAiUsageMetadata(body));
+            }
+            catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                lastException = ex;
+                if (attempt < totalAttempts)
+                {
+                    var delayMs = (int)Math.Min(3000, 250 * Math.Pow(2, attempt - 1));
+                    await Task.Delay(delayMs, cancellationToken);
+                    continue;
+                }
+            }
+            catch (HttpRequestException ex)
+            {
+                lastException = ex;
+                if (attempt < totalAttempts)
+                {
+                    var delayMs = (int)Math.Min(3000, 250 * Math.Pow(2, attempt - 1));
+                    await Task.Delay(delayMs, cancellationToken);
+                    continue;
+                }
+            }
+        }
+
+        throw new InvalidOperationException("OpenAI structured extraction request failed after retries due to transient errors.", lastException);
+    }
+
     private static Uri BuildEndpoint(string configuredEndpoint, string model)
     {
         var baseEndpoint = string.IsNullOrWhiteSpace(configuredEndpoint)
@@ -211,6 +284,17 @@ public class GeminiFlashLiteFinancialExtractionProvider : IStructuredFinancialEx
             ? baseEndpoint
             : $"{baseEndpoint}/{model}:generateContent";
 
+        return new Uri(endpoint);
+    }
+
+    private static Uri BuildOpenAiEndpoint(string configuredEndpoint)
+    {
+        var baseEndpoint = string.IsNullOrWhiteSpace(configuredEndpoint)
+            ? DefaultOpenAIEndpoint
+            : configuredEndpoint.TrimEnd('/');
+        var endpoint = baseEndpoint.EndsWith("/responses", StringComparison.OrdinalIgnoreCase)
+            ? baseEndpoint
+            : $"{baseEndpoint}/responses";
         return new Uri(endpoint);
     }
 
@@ -234,6 +318,24 @@ public class GeminiFlashLiteFinancialExtractionProvider : IStructuredFinancialEx
                 candidateCount = 1,
                 temperature = 0,
                 topP = 0.1
+            }
+        };
+
+        return JsonSerializer.Serialize(payload);
+    }
+
+    private static string BuildOpenAiRequestPayload(string model, string prompt)
+    {
+        var payload = new
+        {
+            model,
+            input = prompt,
+            text = new
+            {
+                format = new
+                {
+                    type = "json_object"
+                }
             }
         };
 
@@ -274,6 +376,44 @@ public class GeminiFlashLiteFinancialExtractionProvider : IStructuredFinancialEx
 
                 return normalized;
             }
+        }
+
+        return string.Empty;
+    }
+
+    private static string ExtractOpenAiResponseText(string responseBody)
+    {
+        using var json = JsonDocument.Parse(responseBody);
+
+        if (json.RootElement.TryGetProperty("output_text", out var outputTextElement)
+            && outputTextElement.ValueKind == JsonValueKind.String)
+        {
+            return outputTextElement.GetString()?.Trim() ?? string.Empty;
+        }
+
+        if (json.RootElement.TryGetProperty("output", out var outputElement)
+            && outputElement.ValueKind == JsonValueKind.Array)
+        {
+            var builder = new StringBuilder();
+            foreach (var outputItem in outputElement.EnumerateArray())
+            {
+                if (!outputItem.TryGetProperty("content", out var contentElement)
+                    || contentElement.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                foreach (var contentItem in contentElement.EnumerateArray())
+                {
+                    if (contentItem.TryGetProperty("text", out var textElement)
+                        && textElement.ValueKind == JsonValueKind.String)
+                    {
+                        builder.Append(textElement.GetString());
+                    }
+                }
+            }
+
+            return builder.ToString().Trim();
         }
 
         return string.Empty;
@@ -589,6 +729,17 @@ OCR text:
         };
     }
 
+    private static string ResolveOpenAiProviderName(string configuredProviderName)
+    {
+        if (string.IsNullOrWhiteSpace(configuredProviderName)
+            || string.Equals(configuredProviderName, "GoogleGemini", StringComparison.OrdinalIgnoreCase))
+        {
+            return "OpenAI";
+        }
+
+        return configuredProviderName;
+    }
+
     private static GeminiUsageMetadata ExtractUsageMetadata(string responseBody)
     {
         using var json = JsonDocument.Parse(responseBody);
@@ -633,6 +784,35 @@ OCR text:
             outputBytes = Encoding.UTF8.GetByteCount(firstCandidateRaw);
         }
 
+        return new GeminiUsageMetadata(inputTokenCount, outputTokenCount, outputBytes);
+    }
+
+    private static GeminiUsageMetadata ExtractOpenAiUsageMetadata(string responseBody)
+    {
+        using var json = JsonDocument.Parse(responseBody);
+        if (!json.RootElement.TryGetProperty("usage", out var usageElement))
+        {
+            return new GeminiUsageMetadata(null, null, null);
+        }
+
+        int? inputTokenCount = null;
+        int? outputTokenCount = null;
+
+        if (usageElement.TryGetProperty("input_tokens", out var inputTokensElement)
+            && inputTokensElement.ValueKind == JsonValueKind.Number
+            && inputTokensElement.TryGetInt32(out var inputTokens))
+        {
+            inputTokenCount = inputTokens;
+        }
+
+        if (usageElement.TryGetProperty("output_tokens", out var outputTokensElement)
+            && outputTokensElement.ValueKind == JsonValueKind.Number
+            && outputTokensElement.TryGetInt32(out var outputTokens))
+        {
+            outputTokenCount = outputTokens;
+        }
+
+        long outputBytes = Encoding.UTF8.GetByteCount(responseBody);
         return new GeminiUsageMetadata(inputTokenCount, outputTokenCount, outputBytes);
     }
 

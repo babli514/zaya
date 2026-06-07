@@ -10,6 +10,7 @@ public class ProviderUsageOptions
 public class ProviderUsagePricingOptions
 {
     public ProviderModelPricingOptions GeminiFlashLite { get; set; } = new();
+    public ProviderModelPricingOptions OpenAI { get; set; } = new();
 }
 
 public class ProviderModelPricingOptions

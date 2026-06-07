@@ -18,6 +18,7 @@ public class GeminiFlashLiteOcrProvider : IOcrProvider
     private sealed record GeminiUsageMetadata(int? InputTokenCount, int? OutputTokenCount, long? OutputBytes);
     private const string PlaceholderModel = "CONFIGURE_ACTUAL_MODEL_ID_HERE";
     private const string DefaultEndpoint = "https://generativelanguage.googleapis.com/v1beta/models";
+    private const string DefaultOpenAIEndpoint = "https://api.openai.com/v1";
     private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".pdf",
@@ -53,9 +54,13 @@ public class GeminiFlashLiteOcrProvider : IOcrProvider
             throw new NotSupportedException("Gemini Flash Lite OCR supports only PDF, PNG, JPG, JPEG, and WEBP files.");
         }
 
-        if (string.IsNullOrWhiteSpace(settings.ApiKey) || string.IsNullOrWhiteSpace(settings.Model) || string.Equals(settings.Model, PlaceholderModel, StringComparison.Ordinal))
+        var useOpenAi = settings.UseOpenAICompatibility;
+        var modelName = useOpenAi ? settings.OpenAIModel : settings.Model;
+        var apiKey = useOpenAi ? settings.OpenAIApiKey : settings.ApiKey;
+
+        if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(modelName) || string.Equals(modelName, PlaceholderModel, StringComparison.Ordinal))
         {
-            throw new InvalidOperationException("Gemini Flash Lite provider is enabled but not fully configured. Missing ApiKey or Model.");
+            throw new InvalidOperationException("Gemini Flash Lite provider is enabled but not fully configured for the active compatibility mode. Missing ApiKey or Model.");
         }
 
         if (!File.Exists(request.FilePath))
@@ -63,11 +68,11 @@ public class GeminiFlashLiteOcrProvider : IOcrProvider
             throw new FileNotFoundException($"Document file was not found at '{request.FilePath}'.", request.FilePath);
         }
 
-        var providerName = string.IsNullOrWhiteSpace(settings.ProviderName) ? "GoogleGemini" : settings.ProviderName;
+        var providerName = ResolveProviderName(settings.ProviderName, useOpenAi);
         var warnings = new List<string>();
         var startedAtUtc = DateTime.UtcNow;
         var stopwatch = Stopwatch.StartNew();
-        var usageRecord = await _providerUsageTracker.StartAsync(request.DocumentId, request.ExtractionJobId, providerName, settings.Model, ProviderOperationType.Ocr, startedAtUtc, cancellationToken);
+        var usageRecord = await _providerUsageTracker.StartAsync(request.DocumentId, request.ExtractionJobId, providerName, modelName, ProviderOperationType.Ocr, startedAtUtc, cancellationToken);
         byte[]? fileBytes = null;
 
         try
@@ -77,11 +82,12 @@ public class GeminiFlashLiteOcrProvider : IOcrProvider
             var base64 = Convert.ToBase64String(fileBytes);
             var prompt = BuildPrompt(request.RequestedDocumentLanguage, request.DetectedLanguage);
 
-            var endpoint = BuildEndpoint(settings.Endpoint, settings.Model);
             var maxRetries = Math.Max(0, settings.MaxRetries);
             var timeoutSeconds = settings.TimeoutSeconds <= 0 ? 60 : settings.TimeoutSeconds;
 
-            var response = await ExecuteWithRetryAsync(endpoint, settings.ApiKey, timeoutSeconds, maxRetries, prompt, mimeType, base64, cancellationToken);
+            var response = useOpenAi
+                ? await ExecuteOpenAiWithRetryAsync(BuildOpenAiEndpoint(settings.OpenAIEndpoint), apiKey, modelName, timeoutSeconds, maxRetries, prompt, mimeType, fileBytes, cancellationToken)
+                : await ExecuteWithRetryAsync(BuildEndpoint(settings.Endpoint, modelName), apiKey, timeoutSeconds, maxRetries, prompt, mimeType, base64, cancellationToken);
             var responseText = response.ResponseText;
 
             stopwatch.Stop();
@@ -92,7 +98,7 @@ public class GeminiFlashLiteOcrProvider : IOcrProvider
                 responseText = "[unreadable]";
             }
 
-            var estimatedCostUsd = _providerUsageTracker.EstimateCostUsd(settings.Model, response.UsageMetadata.InputTokenCount, response.UsageMetadata.OutputTokenCount);
+            var estimatedCostUsd = _providerUsageTracker.EstimateCostUsd(modelName, response.UsageMetadata.InputTokenCount, response.UsageMetadata.OutputTokenCount);
             await _providerUsageTracker.CompleteSuccessAsync(
                 usageRecord,
                 DateTime.UtcNow,
@@ -117,7 +123,7 @@ public class GeminiFlashLiteOcrProvider : IOcrProvider
                 PreferredVisionProvider = request.PreferredVisionProvider,
                 OcrEngineType = EngineType,
                 ProviderName = providerName,
-                ModelName = settings.Model,
+                ModelName = modelName,
                 ProviderLatencyMs = stopwatch.ElapsedMilliseconds,
                 ProviderCostEstimate = estimatedCostUsd,
                 Confidence = confidence
@@ -178,6 +184,33 @@ public class GeminiFlashLiteOcrProvider : IOcrProvider
             : $"{baseEndpoint}/{model}:generateContent";
 
         return new Uri(endpoint);
+    }
+
+    private static Uri BuildOpenAiEndpoint(string configuredEndpoint)
+    {
+        var baseEndpoint = string.IsNullOrWhiteSpace(configuredEndpoint)
+            ? DefaultOpenAIEndpoint
+            : configuredEndpoint.TrimEnd('/');
+        var endpoint = baseEndpoint.EndsWith("/responses", StringComparison.OrdinalIgnoreCase)
+            ? baseEndpoint
+            : $"{baseEndpoint}/responses";
+        return new Uri(endpoint);
+    }
+
+    private static string ResolveProviderName(string configuredProviderName, bool useOpenAi)
+    {
+        if (!useOpenAi)
+        {
+            return string.IsNullOrWhiteSpace(configuredProviderName) ? "GoogleGemini" : configuredProviderName;
+        }
+
+        if (string.IsNullOrWhiteSpace(configuredProviderName)
+            || string.Equals(configuredProviderName, "GoogleGemini", StringComparison.OrdinalIgnoreCase))
+        {
+            return "OpenAI";
+        }
+
+        return configuredProviderName;
     }
 
     private static string BuildPrompt(DocumentLanguage requestedLanguage, DocumentLanguage detectedLanguage)
@@ -369,6 +402,107 @@ Instructions:
         throw new InvalidOperationException("Gemini OCR request failed after retries due to transient errors.", lastException);
     }
 
+    private static async Task<(string ResponseText, GeminiUsageMetadata UsageMetadata)> ExecuteOpenAiWithRetryAsync(Uri endpoint, string apiKey, string modelName, int timeoutSeconds, int maxRetries, string prompt, string mimeType, byte[] fileBytes, CancellationToken cancellationToken)
+    {
+        using var httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(timeoutSeconds)
+        };
+
+        Exception? lastException = null;
+        var totalAttempts = maxRetries + 1;
+        for (var attempt = 1; attempt <= totalAttempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var payload = new
+                {
+                    model = modelName,
+                    input = new object[]
+                    {
+                        new
+                        {
+                            role = "user",
+                            content = new object[]
+                            {
+                                new
+                                {
+                                    type = "input_text",
+                                    text = prompt
+                                },
+                                new
+                                {
+                                    type = "input_file",
+                                    filename = "document",
+                                    file_data = $"data:{mimeType};base64,{Convert.ToBase64String(fileBytes)}"
+                                }
+                            }
+                        }
+                    }
+                };
+
+                var requestJson = JsonSerializer.Serialize(payload);
+                using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint)
+                {
+                    Content = new StringContent(requestJson, Encoding.UTF8, "application/json")
+                };
+                requestMessage.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+                using var response = await httpClient.SendAsync(requestMessage, cancellationToken);
+                var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    if (attempt < totalAttempts && IsTransientStatus(response.StatusCode))
+                    {
+                        var delayMs = (int)Math.Min(3000, 250 * Math.Pow(2, attempt - 1));
+                        await Task.Delay(delayMs, cancellationToken);
+                        continue;
+                    }
+
+                    if ((int)response.StatusCode == 429)
+                    {
+                        throw new InvalidOperationException("OpenAI OCR request was rate-limited. Please retry later.");
+                    }
+
+                    throw new InvalidOperationException($"OpenAI OCR request failed with status code {(int)response.StatusCode}.");
+                }
+
+                var text = ExtractOpenAiPlainText(responseBody);
+                var usageMetadata = ExtractOpenAiUsageMetadata(responseBody);
+                return (text, usageMetadata);
+            }
+            catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                lastException = ex;
+                if (attempt < totalAttempts)
+                {
+                    var delayMs = (int)Math.Min(3000, 250 * Math.Pow(2, attempt - 1));
+                    await Task.Delay(delayMs, cancellationToken);
+                    continue;
+                }
+            }
+            catch (HttpRequestException ex)
+            {
+                lastException = ex;
+                if (attempt < totalAttempts)
+                {
+                    var delayMs = (int)Math.Min(3000, 250 * Math.Pow(2, attempt - 1));
+                    await Task.Delay(delayMs, cancellationToken);
+                    continue;
+                }
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException("OpenAI OCR returned an unexpected response format.", ex);
+            }
+        }
+
+        throw new InvalidOperationException("OpenAI OCR request failed after retries due to transient errors.", lastException);
+    }
+
     private static string ExtractPlainText(string responseBody)
     {
         using var json = JsonDocument.Parse(responseBody);
@@ -399,6 +533,44 @@ Instructions:
 
                 return text;
             }
+        }
+
+        return string.Empty;
+    }
+
+    private static string ExtractOpenAiPlainText(string responseBody)
+    {
+        using var json = JsonDocument.Parse(responseBody);
+
+        if (json.RootElement.TryGetProperty("output_text", out var outputTextElement)
+            && outputTextElement.ValueKind == JsonValueKind.String)
+        {
+            return outputTextElement.GetString()?.Trim() ?? string.Empty;
+        }
+
+        if (json.RootElement.TryGetProperty("output", out var outputElement)
+            && outputElement.ValueKind == JsonValueKind.Array)
+        {
+            var builder = new StringBuilder();
+            foreach (var outputItem in outputElement.EnumerateArray())
+            {
+                if (!outputItem.TryGetProperty("content", out var contentElement)
+                    || contentElement.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                foreach (var contentItem in contentElement.EnumerateArray())
+                {
+                    if (contentItem.TryGetProperty("text", out var textElement)
+                        && textElement.ValueKind == JsonValueKind.String)
+                    {
+                        builder.Append(textElement.GetString());
+                    }
+                }
+            }
+
+            return builder.ToString().Trim();
         }
 
         return string.Empty;
@@ -448,6 +620,35 @@ Instructions:
             outputBytes = Encoding.UTF8.GetByteCount(firstCandidateRaw);
         }
 
+        return new GeminiUsageMetadata(inputTokenCount, outputTokenCount, outputBytes);
+    }
+
+    private static GeminiUsageMetadata ExtractOpenAiUsageMetadata(string responseBody)
+    {
+        using var json = JsonDocument.Parse(responseBody);
+        if (!json.RootElement.TryGetProperty("usage", out var usageElement))
+        {
+            return new GeminiUsageMetadata(null, null, null);
+        }
+
+        int? inputTokenCount = null;
+        int? outputTokenCount = null;
+
+        if (usageElement.TryGetProperty("input_tokens", out var inputTokensElement)
+            && inputTokensElement.ValueKind == JsonValueKind.Number
+            && inputTokensElement.TryGetInt32(out var inputTokens))
+        {
+            inputTokenCount = inputTokens;
+        }
+
+        if (usageElement.TryGetProperty("output_tokens", out var outputTokensElement)
+            && outputTokensElement.ValueKind == JsonValueKind.Number
+            && outputTokensElement.TryGetInt32(out var outputTokens))
+        {
+            outputTokenCount = outputTokens;
+        }
+
+        var outputBytes = Encoding.UTF8.GetByteCount(responseBody);
         return new GeminiUsageMetadata(inputTokenCount, outputTokenCount, outputBytes);
     }
 

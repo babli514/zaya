@@ -147,6 +147,13 @@ public class ProviderUsageTracker : IProviderUsageTracker
             return _options.Pricing.GeminiFlashLite;
         }
 
+        if (modelName.StartsWith("gpt-", StringComparison.OrdinalIgnoreCase)
+            || modelName.Contains("openai", StringComparison.OrdinalIgnoreCase)
+            || modelName.Contains("o4", StringComparison.OrdinalIgnoreCase))
+        {
+            return _options.Pricing.OpenAI;
+        }
+
         return null;
     }
 
