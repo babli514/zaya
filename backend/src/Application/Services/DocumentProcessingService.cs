@@ -28,6 +28,17 @@ public interface ILanguageDetectionService
     DocumentLanguage DetectLanguage(string rawText);
 }
 
+public interface IStructuredFinancialExtractionProvider
+{
+    string ProviderName { get; }
+    Task<FinancialExtractionResult> ExtractAsync(FinancialExtractionInput input, CancellationToken cancellationToken);
+}
+
+public interface IFinancialExtractionProviderSelector
+{
+    IStructuredFinancialExtractionProvider Select(FinancialExtractionProviderSelectionInput input);
+}
+
 public interface IFinancialFieldExtractor
 {
     Task<FinancialExtractionResult> ExtractAsync(FinancialExtractionInput input, CancellationToken cancellationToken);

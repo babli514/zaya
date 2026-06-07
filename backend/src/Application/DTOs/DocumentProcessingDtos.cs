@@ -101,6 +101,16 @@ public class FinancialExtractionResult
     public decimal? ProviderCostEstimate { get; set; }
 }
 
+public class FinancialExtractionProviderSelectionInput
+{
+    public DocumentType DocumentType { get; set; }
+    public DocumentLanguage RequestedLanguage { get; set; }
+    public DocumentLanguage DetectedLanguage { get; set; }
+    public decimal? RuleBasedConfidence { get; set; }
+    public bool RuleBasedSucceeded { get; set; }
+    public bool RuleBasedHasRequiredFields { get; set; }
+}
+
 public class ValidationWarning
 {
     public string Code { get; set; } = string.Empty;

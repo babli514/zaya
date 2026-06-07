@@ -11,6 +11,7 @@ public static class CanadianTaxLabelNormalizer
             "qst" or "tvq" => "qst",
             "hst" or "tvh" => "hst",
             "pst" or "tvp" => "pst",
+            "tip" or "pourboire" => "tip",
             _ => normalized
         };
     }

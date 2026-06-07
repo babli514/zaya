@@ -47,10 +47,15 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.Configure<DocumentUploadOptions>(builder.Configuration.GetSection(DocumentUploadOptions.SectionName));
 builder.Services.Configure<OcrOptions>(builder.Configuration.GetSection(OcrOptions.SectionName));
+builder.Services.Configure<FinancialExtractionOptions>(builder.Configuration.GetSection(FinancialExtractionOptions.SectionName));
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<IDocumentProcessingService, DocumentProcessingService>();
 builder.Services.AddScoped<IOcrRouter, OcrRouter>();
 builder.Services.AddScoped<ILanguageDetectionService, LanguageDetectionService>();
+builder.Services.AddScoped<RuleBasedFinancialExtractionProvider>();
+builder.Services.AddScoped<GeminiFlashLiteFinancialExtractionProvider>();
+builder.Services.AddScoped<LlmFinancialExtractionProvider>();
+builder.Services.AddScoped<IFinancialExtractionProviderSelector, FinancialExtractionProviderSelector>();
 builder.Services.AddScoped<IFinancialFieldExtractor, FinancialFieldExtractor>();
 builder.Services.AddScoped<IFinancialDocumentValidator, FinancialDocumentValidator>();
 builder.Services.AddScoped<ITesseractOcrEngineAdapter, TesseractOcrEngineAdapter>();
