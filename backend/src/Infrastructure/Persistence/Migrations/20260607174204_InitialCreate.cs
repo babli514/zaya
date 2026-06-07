@@ -45,11 +45,20 @@ namespace Infrastructure.Persistence.Migrations
                     StartedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false),
                     CompletedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true),
                     Status = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    RequestedDocumentLanguage = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    DetectedLanguage = table.Column<string>(type: "nvarchar(450)", nullable: false),
                     PrimaryOcrEngine = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     FallbackOcrEngine = table.Column<string>(type: "nvarchar(max)", nullable: true),
                     FallbackUsed = table.Column<bool>(type: "bit", nullable: false),
+                    PrimaryProviderName = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: true),
+                    PrimaryModelName = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: true),
+                    PrimaryLatencyMs = table.Column<long>(type: "bigint", nullable: false),
+                    FallbackProviderName = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: true),
+                    FallbackModelName = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: true),
+                    FallbackLatencyMs = table.Column<long>(type: "bigint", nullable: true),
+                    EstimatedProviderCost = table.Column<decimal>(type: "decimal(18,6)", nullable: true),
+                    PageCount = table.Column<int>(type: "int", nullable: true),
                     RawText = table.Column<string>(type: "nvarchar(max)", nullable: true),
-                    DetectedLanguage = table.Column<string>(type: "nvarchar(450)", nullable: false),
                     OverallConfidence = table.Column<decimal>(type: "decimal(5,4)", nullable: true),
                     WarningsJson = table.Column<string>(type: "nvarchar(max)", nullable: true),
                     ErrorMessage = table.Column<string>(type: "nvarchar(2000)", maxLength: 2000, nullable: true)
@@ -133,6 +142,46 @@ namespace Infrastructure.Persistence.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "ProviderUsageRecords",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    DocumentId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    ExtractionJobId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
+                    ProviderName = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: false),
+                    ModelName = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: false),
+                    OperationType = table.Column<string>(type: "nvarchar(450)", nullable: false),
+                    StartedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    CompletedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    LatencyMs = table.Column<long>(type: "bigint", nullable: true),
+                    Success = table.Column<bool>(type: "bit", nullable: false),
+                    ErrorCode = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: true),
+                    ErrorMessage = table.Column<string>(type: "nvarchar(2000)", maxLength: 2000, nullable: true),
+                    InputTokenCount = table.Column<int>(type: "int", nullable: true),
+                    OutputTokenCount = table.Column<int>(type: "int", nullable: true),
+                    InputBytes = table.Column<long>(type: "bigint", nullable: true),
+                    OutputBytes = table.Column<long>(type: "bigint", nullable: true),
+                    EstimatedCostUsd = table.Column<decimal>(type: "decimal(18,6)", nullable: true),
+                    CreatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ProviderUsageRecords", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_ProviderUsageRecords_Documents_DocumentId",
+                        column: x => x.DocumentId,
+                        principalTable: "Documents",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "FK_ProviderUsageRecords_ExtractionJobs_ExtractionJobId",
+                        column: x => x.ExtractionJobId,
+                        principalTable: "ExtractionJobs",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.SetNull);
+                });
+
+            migrationBuilder.CreateTable(
                 name: "ExtractedLineItems",
                 columns: table => new
                 {
@@ -209,6 +258,36 @@ namespace Infrastructure.Persistence.Migrations
                 name: "IX_ManualCorrections_DocumentId",
                 table: "ManualCorrections",
                 column: "DocumentId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ProviderUsageRecords_DocumentId",
+                table: "ProviderUsageRecords",
+                column: "DocumentId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ProviderUsageRecords_ExtractionJobId",
+                table: "ProviderUsageRecords",
+                column: "ExtractionJobId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ProviderUsageRecords_ModelName",
+                table: "ProviderUsageRecords",
+                column: "ModelName");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ProviderUsageRecords_OperationType",
+                table: "ProviderUsageRecords",
+                column: "OperationType");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ProviderUsageRecords_ProviderName",
+                table: "ProviderUsageRecords",
+                column: "ProviderName");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ProviderUsageRecords_StartedAtUtc",
+                table: "ProviderUsageRecords",
+                column: "StartedAtUtc");
         }
 
         /// <inheritdoc />
@@ -219,6 +298,9 @@ namespace Infrastructure.Persistence.Migrations
 
             migrationBuilder.DropTable(
                 name: "ManualCorrections");
+
+            migrationBuilder.DropTable(
+                name: "ProviderUsageRecords");
 
             migrationBuilder.DropTable(
                 name: "ExtractedFinancialDocuments");
