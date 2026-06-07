@@ -42,6 +42,12 @@ public class DocumentsController : ControllerBase
         _environment = environment;
     }
 
+    /// <summary>
+    /// List recently uploaded financial documents.
+    /// </summary>
+    /// <remarks>
+    /// Processing status values: Pending, Uploaded, Processing, Completed, Failed, NeedsReview.
+    /// </remarks>
     [HttpGet]
     [ProducesResponseType(typeof(IEnumerable<DocumentListItemDto>), StatusCodes.Status200OK)]
     public async Task<ActionResult<IEnumerable<DocumentListItemDto>>> GetAllDocuments(CancellationToken cancellationToken)
@@ -50,6 +56,12 @@ public class DocumentsController : ControllerBase
         return Ok(documents);
     }
 
+    /// <summary>
+    /// Get document metadata by document ID.
+    /// </summary>
+    /// <remarks>
+    /// Processing status values: Pending, Uploaded, Processing, Completed, Failed, NeedsReview.
+    /// </remarks>
     [HttpGet("{id:guid}")]
     [ProducesResponseType(typeof(DocumentDetailDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -66,6 +78,15 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Get structured OCR extraction and validation result for a document.
+    /// </summary>
+    /// <remarks>
+    /// Includes OCR metadata fields: primaryOcrEngineUsed, fallbackOcrEngineUsed, fallbackUsed, providerName, modelName, providerLatencyMs.
+    /// Validation warnings include bilingual messages in messageEn and messageFr.
+    /// Validation warning severity values: Info, Warning, Error.
+    /// Supported Canadian tax labels: GST/TPS, QST/TVQ, HST/TVH, PST/TVP, Tip/Pourboire.
+    /// </remarks>
     [HttpGet("{id:guid}/result")]
     [ProducesResponseType(typeof(DocumentResultDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -82,6 +103,9 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Get latest OCR raw text for a document.
+    /// </summary>
     [HttpGet("{id:guid}/raw-text")]
     [ProducesResponseType(typeof(DocumentRawTextDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -98,6 +122,9 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Download the original uploaded file.
+    /// </summary>
     [HttpGet("{id:guid}/file")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -152,6 +179,14 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Upload a receipt or invoice for OCR processing.
+    /// </summary>
+    /// <remarks>
+    /// Supported file types: application/pdf, image/png, image/jpeg, image/webp.
+    /// documentType values: receipt, invoice.
+    /// documentLanguage values: auto, en-CA, fr-CA, bilingual-CA.
+    /// </remarks>
     [HttpPost("upload")]
     [ProducesResponseType(typeof(UploadDocumentResponseDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -234,6 +269,12 @@ public class DocumentsController : ControllerBase
         return CreatedAtAction(nameof(GetDocument), new { id = response.DocumentId }, response);
     }
 
+    /// <summary>
+    /// Process a document using OCR routing and financial extraction.
+    /// </summary>
+    /// <remarks>
+    /// Processing status values: Pending, Uploaded, Processing, Completed, Failed, NeedsReview.
+    /// </remarks>
     [HttpPost("{id:guid}/process")]
     [ProducesResponseType(typeof(DocumentDetailDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -250,6 +291,9 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Apply manual corrections to extracted fields.
+    /// </summary>
     [HttpPut("{id:guid}/extracted-fields")]
     [ProducesResponseType(typeof(DocumentResultDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -266,6 +310,9 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Get manual correction history for a document.
+    /// </summary>
     [HttpGet("{id:guid}/corrections")]
     [ProducesResponseType(typeof(IEnumerable<ManualCorrectionDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -282,6 +329,9 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Export document result as JSON.
+    /// </summary>
     [HttpGet("{id:guid}/export/json")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -301,6 +351,9 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Export document result as CSV.
+    /// </summary>
     [HttpGet("{id:guid}/export/csv")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -320,6 +373,9 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Export extracted line items as CSV.
+    /// </summary>
     [HttpGet("{id:guid}/export/line-items.csv")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]

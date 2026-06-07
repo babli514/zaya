@@ -8,7 +8,6 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure Serilog
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
     .WriteTo.Console()
@@ -18,15 +17,13 @@ Log.Logger = new LoggerConfiguration()
 
 builder.Host.UseSerilog();
 
-// Add services
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new() { Title = "Financial OCR API", Version = "v1" });
+    c.SwaggerDoc("v1", new() { Title = "Financial OCR API", Version = "v1", Description = "Bilingual Canadian financial OCR API for receipts and invoices with OCR routing, structured extraction, validation, and export workflows." });
 });
 
-// CORS configuration for Angular development
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAngularLocal", policy =>
@@ -38,7 +35,6 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Database
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? "Server=(localdb)\\mssqllocaldb;Database=FinancialOCR;Trusted_Connection=true;";
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -64,7 +60,6 @@ builder.Services.AddScoped<IOcrProvider, TesseractOcrProvider>();
 builder.Services.AddScoped<IOcrProvider, GeminiFlashLiteOcrProvider>();
 builder.Services.AddScoped<IOcrProvider, VisionFallbackOcrProvider>();
 
-// Health checks
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<AppDbContext>();
 
@@ -77,7 +72,6 @@ if (!app.Environment.IsEnvironment("Testing"))
     db.Database.Migrate();
 }
 
-// Configure middleware
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -92,10 +86,7 @@ app.UseSerilogRequestLogging();
 app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
 app.UseHttpsRedirection();
 app.UseCors("AllowAngularLocal");
-
-// Health check endpoint
 app.MapHealthChecks("/api/health");
-
 app.MapControllers();
 
 app.Run();
@@ -103,4 +94,3 @@ app.Run();
 public partial class Program
 {
 }
-
