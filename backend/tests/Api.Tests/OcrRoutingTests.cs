@@ -5,6 +5,7 @@ using FinancialOCR.Application.Services;
 using FinancialOCR.Domain.Entities;
 using FinancialOCR.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -319,6 +320,55 @@ public class OcrRoutingTests
         };
 
         await Assert.ThrowsAsync<NotSupportedException>(() => provider.ExtractAsync(request, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Vision_Fallback_Throws_When_Gemini_Preferred_But_Disabled()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(Options.Create(new OcrOptions
+        {
+            VisionOcr = new VisionOcrOptions
+            {
+                FallbackEnabled = true,
+                PreferredProvider = "GeminiFlashLite",
+                GeminiFlashLite = new GeminiFlashLiteOptions
+                {
+                    Enabled = false,
+                    ApiKey = "unused",
+                    Model = "gemini-3.1-flash-lite"
+                }
+            }
+        }));
+        services.AddSingleton<IOcrProvider>(new FakeOcrProvider(
+            OcrEngineType.GeminiFlashLite,
+            request => new OcrResult
+            {
+                RawText = "should not be called",
+                Confidence = 0.99m,
+                RequestedDocumentLanguage = request.RequestedDocumentLanguage,
+                DetectedLanguage = request.DetectedLanguage,
+                PreferredVisionProvider = request.PreferredVisionProvider,
+                OcrEngineType = OcrEngineType.GeminiFlashLite,
+                ProviderName = "GoogleGemini"
+            }));
+
+        var serviceProvider = services.BuildServiceProvider();
+        var visionFallbackProvider = new VisionFallbackOcrProvider(serviceProvider, serviceProvider.GetRequiredService<IOptions<OcrOptions>>());
+
+        var request = new OcrRequest
+        {
+            DocumentId = Guid.NewGuid(),
+            FilePath = "c:/tmp/img.png",
+            ContentType = "image/png",
+            RequestedDocumentLanguage = DocumentLanguage.EnglishCanada,
+            DetectedLanguage = DocumentLanguage.EnglishCanada,
+            PreferredVisionProvider = "GeminiFlashLite"
+        };
+
+        var exception = await Assert.ThrowsAsync<NotSupportedException>(() => visionFallbackProvider.ExtractAsync(request, CancellationToken.None));
+
+        Assert.Contains("disabled", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]

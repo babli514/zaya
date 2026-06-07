@@ -29,6 +29,11 @@ public class VisionFallbackOcrProvider : IOcrProvider
 
         if (string.Equals(_ocrOptions.VisionOcr.PreferredProvider, "GeminiFlashLite", StringComparison.OrdinalIgnoreCase))
         {
+            if (!_ocrOptions.VisionOcr.GeminiFlashLite.Enabled)
+            {
+                throw new NotSupportedException("Gemini Flash Lite vision fallback provider is disabled.");
+            }
+
             var gemini = _serviceProvider.GetServices<IOcrProvider>().FirstOrDefault(p => p.EngineType == OcrEngineType.GeminiFlashLite);
             if (gemini != null)
             {
