@@ -52,27 +52,48 @@ Per sample, define:
 
 ## Run evaluation
 
-From repository root:
+From repository root, use the helper script:
 
-```bash
-dotnet test backend/tests/Api.Tests/Api.Tests.csproj --filter EvaluationHarness_Generates_Results_And_Summary
+```powershell
+powershell -ExecutionPolicy Bypass -File .\evaluation\run-eval.ps1
 ```
 
 By default, Gemini API calls are disabled.
 
-To explicitly allow live Gemini execution:
+Enable Gemini explicitly:
 
-```bash
-set EVAL_ENABLE_GEMINI_API=true
-set EVAL_GEMINI_API_KEY=your_key
-set EVAL_GEMINI_MODEL=your_model
-set EVAL_GEMINI_ENDPOINT=https://generativelanguage.googleapis.com/v1beta/models
+```powershell
+powershell -ExecutionPolicy Bypass -File .\evaluation\run-eval.ps1 -EnableGeminiApi -GeminiApiKey "your_key" -GeminiModel "your_model"
 ```
 
-Optionally set Tesseract traineddata path:
+Strict Gemini helper (fails fast unless key/model are provided):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\evaluation\run-eval-gemini.ps1 -GeminiApiKey "your_key" -GeminiModel "your_model"
+```
+
+Custom Gemini endpoint:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\evaluation\run-eval-gemini.ps1 -GeminiApiKey "your_key" -GeminiModel "your_model" -GeminiEndpoint "https://generativelanguage.googleapis.com/v1beta/models"
+```
+
+Dry run (validate and print effective settings without executing tests):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\evaluation\run-eval-gemini.ps1 -GeminiApiKey "your_key" -GeminiModel "your_model" -DryRun
+```
+
+Custom Tesseract traineddata path:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\evaluation\run-eval.ps1 -TessdataPath "C:\path\to\tessdata"
+```
+
+Direct test command is also available:
 
 ```bash
-set EVAL_TESSDATA_PATH=absolute_path_to_tessdata
+dotnet test backend/tests/Api.Tests/Api.Tests.csproj --filter EvaluationHarness_Generates_Results_And_Summary
 ```
 
 ## Outputs
