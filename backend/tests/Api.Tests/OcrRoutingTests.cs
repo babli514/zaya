@@ -323,6 +323,64 @@ public class OcrRoutingTests
     }
 
     [Fact]
+    public async Task Gemini_Provider_Returns_Controlled_Error_For_Unsupported_File_Type()
+    {
+        var provider = new GeminiFlashLiteOcrProvider(Options.Create(new OcrOptions
+        {
+            VisionOcr = new VisionOcrOptions
+            {
+                GeminiFlashLite = new GeminiFlashLiteOptions
+                {
+                    Enabled = true,
+                    ApiKey = "key",
+                    Model = "gemini-3.1-flash-lite"
+                }
+            }
+        }));
+
+        var request = new OcrRequest
+        {
+            DocumentId = Guid.NewGuid(),
+            FilePath = "c:/tmp/file.txt",
+            ContentType = "text/plain",
+            RequestedDocumentLanguage = DocumentLanguage.BilingualCanada,
+            DetectedLanguage = DocumentLanguage.Unknown
+        };
+
+        var exception = await Assert.ThrowsAsync<NotSupportedException>(() => provider.ExtractAsync(request, CancellationToken.None));
+
+        Assert.Contains("supports only PDF, PNG, JPG, JPEG, and WEBP", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Gemini_Provider_Returns_Controlled_Error_When_File_Is_Missing()
+    {
+        var provider = new GeminiFlashLiteOcrProvider(Options.Create(new OcrOptions
+        {
+            VisionOcr = new VisionOcrOptions
+            {
+                GeminiFlashLite = new GeminiFlashLiteOptions
+                {
+                    Enabled = true,
+                    ApiKey = "key",
+                    Model = "gemini-3.1-flash-lite"
+                }
+            }
+        }));
+
+        var request = new OcrRequest
+        {
+            DocumentId = Guid.NewGuid(),
+            FilePath = "c:/tmp/does-not-exist.png",
+            ContentType = "image/png",
+            RequestedDocumentLanguage = DocumentLanguage.EnglishCanada,
+            DetectedLanguage = DocumentLanguage.Unknown
+        };
+
+        await Assert.ThrowsAsync<FileNotFoundException>(() => provider.ExtractAsync(request, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Vision_Fallback_Throws_When_Gemini_Preferred_But_Disabled()
     {
         var services = new ServiceCollection();
