@@ -11,6 +11,7 @@ public interface IDocumentService
     Task<UploadDocumentResponseDto> UploadDocumentAsync(UploadDocumentRequestDto requestDto, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<DocumentListItemDto>> GetRecentDocumentsAsync(CancellationToken cancellationToken = default);
     Task<DocumentDetailDto> GetDocumentAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<DocumentDetailDto> MarkDocumentAsProcessingAsync(Guid id, CancellationToken cancellationToken = default);
     Task<DocumentResultDto> GetDocumentResultAsync(Guid id, CancellationToken cancellationToken = default);
     Task<DocumentFileDto> GetDocumentFileAsync(Guid id, CancellationToken cancellationToken = default);
     Task<DocumentRawTextDto> GetDocumentRawTextAsync(Guid id, CancellationToken cancellationToken = default);
@@ -88,6 +89,36 @@ public class DocumentService : IDocumentService
         {
             throw new KeyNotFoundException($"Document with ID {id} not found");
         }
+
+        return new DocumentDetailDto
+        {
+            Id = document.Id,
+            OriginalFileName = document.OriginalFileName ?? string.Empty,
+            StoredFileName = document.StoredFileName ?? string.Empty,
+            ContentType = document.ContentType,
+            FileSizeBytes = document.FileSizeBytes,
+            DocumentType = document.DocumentType.ToString(),
+            DocumentLanguage = document.DocumentLanguage.ToString(),
+            Status = document.ProcessingStatus.ToString(),
+            UploadedAtUtc = document.UploadedAtUtc,
+            ProcessedAtUtc = document.ProcessedAtUtc
+        };
+    }
+
+    public async Task<DocumentDetailDto> MarkDocumentAsProcessingAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var document = await _dbContext.Documents
+            .FirstOrDefaultAsync(d => d.Id == id, cancellationToken);
+
+        if (document == null)
+        {
+            throw new KeyNotFoundException($"Document with ID {id} not found");
+        }
+
+        document.ProcessingStatus = ProcessingStatus.Processing;
+        document.ProcessedAtUtc = null;
+        document.FailureReason = null;
+        await _dbContext.SaveChangesAsync(cancellationToken);
 
         return new DocumentDetailDto
         {

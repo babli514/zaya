@@ -49,6 +49,8 @@ builder.Services.Configure<OcrOptions>(builder.Configuration.GetSection(OcrOptio
 builder.Services.Configure<FinancialExtractionOptions>(builder.Configuration.GetSection(FinancialExtractionOptions.SectionName));
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<IDocumentProcessingService, DocumentProcessingService>();
+builder.Services.AddSingleton<IDocumentProcessingQueue, DocumentProcessingQueue>();
+builder.Services.AddHostedService<DocumentProcessingWorker>();
 builder.Services.AddScoped<IOcrRouter, OcrRouter>();
 builder.Services.AddScoped<ILanguageDetectionService, LanguageDetectionService>();
 builder.Services.AddScoped<RuleBasedFinancialExtractionProvider>();

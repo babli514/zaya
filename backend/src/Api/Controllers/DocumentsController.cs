@@ -1,4 +1,5 @@
 using FinancialOCR.Api.Options;
+using FinancialOCR.Api.Services;
 using FinancialOCR.Application.DTOs;
 using FinancialOCR.Application.Services;
 using FinancialOCR.Domain.Entities;
@@ -23,20 +24,20 @@ public class DocumentsController : ControllerBase
     };
 
     private readonly IDocumentService _documentService;
-    private readonly IDocumentProcessingService _documentProcessingService;
+    private readonly IDocumentProcessingQueue _documentProcessingQueue;
     private readonly ILogger<DocumentsController> _logger;
     private readonly DocumentUploadOptions _uploadOptions;
     private readonly IWebHostEnvironment _environment;
 
     public DocumentsController(
         IDocumentService documentService,
-        IDocumentProcessingService documentProcessingService,
+        IDocumentProcessingQueue documentProcessingQueue,
         ILogger<DocumentsController> logger,
         IOptions<DocumentUploadOptions> uploadOptions,
         IWebHostEnvironment environment)
     {
         _documentService = documentService;
-        _documentProcessingService = documentProcessingService;
+        _documentProcessingQueue = documentProcessingQueue;
         _logger = logger;
         _uploadOptions = uploadOptions.Value;
         _environment = environment;
@@ -194,6 +195,7 @@ public class DocumentsController : ControllerBase
         [FromForm] IFormFile? file,
         [FromForm] string? documentType,
         [FromForm] string? documentLanguage,
+        [FromForm] bool enqueueProcessing,
         CancellationToken cancellationToken)
     {
         if (file == null)
@@ -245,6 +247,29 @@ public class DocumentsController : ControllerBase
 
         var response = await _documentService.UploadDocumentAsync(requestDto, cancellationToken);
         _logger.LogInformation("Document uploaded {DocumentId}", response.DocumentId);
+
+        if (!enqueueProcessing)
+        {
+            return CreatedAtAction(nameof(GetDocument), new { id = response.DocumentId }, response);
+        }
+
+        try
+        {
+            var enqueued = await _documentProcessingQueue.QueueAsync(response.DocumentId, cancellationToken);
+            if (!enqueued)
+            {
+                _logger.LogError("Failed to enqueue uploaded document for processing. DocumentId={DocumentId}", response.DocumentId);
+                return CreatedAtAction(nameof(GetDocument), new { id = response.DocumentId }, response);
+            }
+
+            await _documentService.MarkDocumentAsProcessingAsync(response.DocumentId, cancellationToken);
+            response.Status = ProcessingStatus.Processing.ToString();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to enqueue uploaded document for processing. DocumentId={DocumentId}", response.DocumentId);
+        }
+
         return CreatedAtAction(nameof(GetDocument), new { id = response.DocumentId }, response);
     }
 
@@ -271,14 +296,22 @@ public class DocumentsController : ControllerBase
     /// Processing status values: Pending, Uploaded, Processing, Completed, Failed, NeedsReview.
     /// </remarks>
     [HttpPost("{id:guid}/process")]
-    [ProducesResponseType(typeof(DocumentDetailDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(DocumentDetailDto), StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public async Task<ActionResult<DocumentDetailDto>> ProcessDocument(Guid id, CancellationToken cancellationToken)
     {
         try
         {
-            var processed = await _documentProcessingService.ProcessDocumentAsync(id, cancellationToken);
-            return Ok(processed);
+            var enqueued = await _documentProcessingQueue.QueueAsync(id, cancellationToken);
+            if (!enqueued)
+            {
+                var current = await _documentService.GetDocumentAsync(id, cancellationToken);
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, current);
+            }
+
+            var processingDocument = await _documentService.MarkDocumentAsProcessingAsync(id, cancellationToken);
+            return AcceptedAtAction(nameof(GetDocument), new { id }, processingDocument);
         }
         catch (KeyNotFoundException)
         {

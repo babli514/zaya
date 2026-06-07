@@ -147,17 +147,39 @@ public class DocumentsApiIntegrationTests : IClassFixture<ApiIntegrationTestFact
     }
 
     [Fact]
+    public async Task Upload_With_EnqueueProcessing_Transitions_To_Processing_Or_Terminal()
+    {
+        using var content = BuildUploadContent("doc.pdf", "application/pdf", "receipt", "en-CA", "%PDF-1.4");
+        content.Add(new StringContent("true"), "enqueueProcessing");
+
+        var response = await _client.PostAsync("/api/documents/upload", content);
+        response.EnsureSuccessStatusCode();
+        var upload = await response.Content.ReadFromJsonAsync<UploadDocumentResponseDto>();
+
+        Assert.NotNull(upload);
+        var detailResponse = await _client.GetAsync($"/api/documents/{upload!.DocumentId}");
+        detailResponse.EnsureSuccessStatusCode();
+        var detail = await detailResponse.Content.ReadFromJsonAsync<DocumentDetailDto>();
+
+        Assert.NotNull(detail);
+        Assert.True(detail!.Status is "Processing" or "Completed" or "NeedsReview" or "Failed");
+    }
+
+    [Fact]
     public async Task Process_Handles_Test_Document_Using_Fake_Ocr_Provider()
     {
         var upload = await UploadAsync("doc.pdf", "application/pdf", "receipt", "en-CA", "%PDF-1.4");
 
         var response = await _client.PostAsync($"/api/documents/{upload.DocumentId}/process", content: null);
-        response.EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var detail = await response.Content.ReadFromJsonAsync<DocumentDetailDto>();
 
         Assert.NotNull(detail);
         Assert.Equal(upload.DocumentId, detail!.Id);
-        Assert.True(detail.Status == "Completed" || detail.Status == "NeedsReview");
+        Assert.Equal("Processing", detail.Status);
+
+        var terminalStatus = await WaitForTerminalStatusAsync(upload.DocumentId);
+        Assert.True(terminalStatus == "Completed" || terminalStatus == "NeedsReview");
     }
 
     [Fact]
@@ -165,7 +187,9 @@ public class DocumentsApiIntegrationTests : IClassFixture<ApiIntegrationTestFact
     {
         var upload = await UploadAsync("doc.pdf", "application/pdf", "receipt", "en-CA", "%PDF-1.4");
         var processResponse = await _client.PostAsync($"/api/documents/{upload.DocumentId}/process", content: null);
-        processResponse.EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.Accepted, processResponse.StatusCode);
+
+        await WaitForTerminalStatusAsync(upload.DocumentId);
 
         var response = await _client.GetAsync($"/api/documents/{upload.DocumentId}/result");
         response.EnsureSuccessStatusCode();
@@ -183,7 +207,9 @@ public class DocumentsApiIntegrationTests : IClassFixture<ApiIntegrationTestFact
     {
         var upload = await UploadAsync("doc.pdf", "application/pdf", "receipt", "en-CA", "%PDF-1.4");
         var processResponse = await _client.PostAsync($"/api/documents/{upload.DocumentId}/process", content: null);
-        processResponse.EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.Accepted, processResponse.StatusCode);
+
+        await WaitForTerminalStatusAsync(upload.DocumentId);
 
         var update = new UpdateExtractedFieldsRequestDto
         {
@@ -210,7 +236,9 @@ public class DocumentsApiIntegrationTests : IClassFixture<ApiIntegrationTestFact
     {
         var upload = await UploadAsync("doc.pdf", "application/pdf", "receipt", "en-CA", "%PDF-1.4");
         var processResponse = await _client.PostAsync($"/api/documents/{upload.DocumentId}/process", content: null);
-        processResponse.EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.Accepted, processResponse.StatusCode);
+
+        await WaitForTerminalStatusAsync(upload.DocumentId);
 
         var response = await _client.GetAsync($"/api/documents/{upload.DocumentId}/export/json");
         response.EnsureSuccessStatusCode();
@@ -235,7 +263,9 @@ public class DocumentsApiIntegrationTests : IClassFixture<ApiIntegrationTestFact
     {
         var upload = await UploadAsync("doc.pdf", "application/pdf", "receipt", "en-CA", "%PDF-1.4");
         var processResponse = await _client.PostAsync($"/api/documents/{upload.DocumentId}/process", content: null);
-        processResponse.EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.Accepted, processResponse.StatusCode);
+
+        await WaitForTerminalStatusAsync(upload.DocumentId);
 
         var response = await _client.GetAsync($"/api/documents/{upload.DocumentId}/export/csv");
         response.EnsureSuccessStatusCode();
@@ -246,6 +276,26 @@ public class DocumentsApiIntegrationTests : IClassFixture<ApiIntegrationTestFact
         Assert.Contains("\"DocumentId\",\"DocumentType\",\"RequestedLanguage\"", csv, StringComparison.Ordinal);
         Assert.Contains("\"VendorName\"", csv, StringComparison.Ordinal);
         Assert.Contains(upload.DocumentId.ToString(), csv, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<string> WaitForTerminalStatusAsync(Guid documentId)
+    {
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            var response = await _client.GetAsync($"/api/documents/{documentId}");
+            response.EnsureSuccessStatusCode();
+            var detail = await response.Content.ReadFromJsonAsync<DocumentDetailDto>();
+            Assert.NotNull(detail);
+
+            if (detail!.Status is "Completed" or "NeedsReview" or "Failed")
+            {
+                return detail.Status;
+            }
+
+            await Task.Delay(100);
+        }
+
+        throw new TimeoutException($"Document {documentId} did not reach a terminal status in time.");
     }
 
     private async Task<UploadDocumentResponseDto> UploadAsync(string fileName, string contentType, string documentType, string documentLanguage, string payload)

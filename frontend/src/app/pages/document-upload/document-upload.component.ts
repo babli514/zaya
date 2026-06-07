@@ -5,8 +5,6 @@ import { FormsModule } from '@angular/forms';
 import { Router, RouterModule } from '@angular/router';
 import { DocumentService, UploadDocumentLanguage, UploadDocumentType } from '../../services/document.service';
 
-type UploadMode = 'uploadOnly' | 'uploadAndProcess';
-
 interface LabelOption<TValue extends string> {
   value: TValue;
   label: string;
@@ -119,7 +117,7 @@ const DOCUMENT_LANGUAGE_OPTIONS: LabelOption<UploadDocumentLanguage>[] = [
           <button
             type="button"
             [disabled]="selectedFiles.length === 0 || uploading || processing"
-            (click)="submit('uploadOnly')"
+            (click)="submit(false)"
             class="btn btn-primary btn-lg"
           >
             {{ labels.buttons.uploadOnly }}
@@ -128,7 +126,7 @@ const DOCUMENT_LANGUAGE_OPTIONS: LabelOption<UploadDocumentLanguage>[] = [
           <button
             type="button"
             [disabled]="selectedFiles.length === 0 || uploading || processing"
-            (click)="submit('uploadAndProcess')"
+            (click)="submit(true)"
             class="btn btn-primary btn-lg"
           >
             {{ labels.buttons.uploadAndProcess }}
@@ -362,7 +360,7 @@ export class DocumentUploadComponent {
     this.selectedFileDisplay = `${file.name} (${this.formatFileSize(file.size)})`;
   }
 
-  submit(mode: UploadMode): void {
+  submit(enqueueProcessing: boolean): void {
     const uploadFile = this.selectedFiles[0];
     if (!uploadFile) {
       this.error = this.labels.validation.fileRequired;
@@ -375,7 +373,7 @@ export class DocumentUploadComponent {
     this.error = '';
     this.successMessage = '';
 
-    this.documentService.uploadDocument(uploadFile, this.documentType, this.documentLanguage).subscribe({
+    this.documentService.uploadDocument(uploadFile, this.documentType, this.documentLanguage, enqueueProcessing).subscribe({
       next: (event) => {
         if (event.type === HttpEventType.UploadProgress) {
           if (event.total && event.total > 0) {
@@ -391,7 +389,7 @@ export class DocumentUploadComponent {
         this.uploading = false;
 
         const uploadResponse = event.body;
-        const shouldProcess = mode === 'uploadAndProcess' || this.processAfterUpload;
+        const shouldProcess = enqueueProcessing || this.processAfterUpload;
 
         if (!shouldProcess) {
           this.successMessage = this.labels.status.uploadSuccess;
@@ -399,18 +397,9 @@ export class DocumentUploadComponent {
           return;
         }
 
-        this.processing = true;
-        this.documentService.processDocument(uploadResponse.documentId).subscribe({
-          next: () => {
-            this.processing = false;
-            this.successMessage = this.labels.status.processSuccess;
-            this.navigateToDocument(uploadResponse.documentId);
-          },
-          error: (err) => {
-            this.processing = false;
-            this.error = this.getBackendErrorMessage(err);
-          }
-        });
+        this.processing = false;
+        this.successMessage = this.labels.status.processSuccess;
+        this.navigateToDocument(uploadResponse.documentId);
       },
       error: (err) => {
         this.uploading = false;

@@ -546,6 +546,18 @@ public class OcrRoutingTests
             });
         }
 
+        public Task<DocumentDetailDto> MarkDocumentAsProcessingAsync(Guid id, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new DocumentDetailDto
+            {
+                Id = id,
+                OriginalFileName = "file.png",
+                StoredFileName = "file.png",
+                ContentType = "image/png",
+                Status = "Processing"
+            });
+        }
+
         public Task<DocumentResultDto> GetDocumentResultAsync(Guid id, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
@@ -572,3 +584,4 @@ public class OcrRoutingTests
         }
     }
 }
+

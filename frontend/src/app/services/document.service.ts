@@ -146,8 +146,8 @@ export class DocumentService {
     return this.http.put<DocumentResultDto>(`${this.apiUrl}/${id}/extracted-fields`, request);
   }
 
-  uploadDocument(file: File, documentType: UploadDocumentType, documentLanguage: UploadDocumentLanguage): Observable<HttpEvent<UploadDocumentResponseDto>> {
-    const formData = this.createUploadFormData([file], documentType, documentLanguage);
+  uploadDocument(file: File, documentType: UploadDocumentType, documentLanguage: UploadDocumentLanguage, enqueueProcessing = false): Observable<HttpEvent<UploadDocumentResponseDto>> {
+    const formData = this.createUploadFormData([file], documentType, documentLanguage, enqueueProcessing);
 
     return this.http.post<UploadDocumentResponseDto>(`${this.apiUrl}/upload`, formData, {
       observe: 'events',
@@ -155,7 +155,7 @@ export class DocumentService {
     });
   }
 
-  private createUploadFormData(files: readonly File[], documentType: UploadDocumentType, documentLanguage: UploadDocumentLanguage): FormData {
+  private createUploadFormData(files: readonly File[], documentType: UploadDocumentType, documentLanguage: UploadDocumentLanguage, enqueueProcessing: boolean): FormData {
     const formData = new FormData();
     const file = files[0];
 
@@ -165,11 +165,14 @@ export class DocumentService {
 
     formData.append('documentType', documentType);
     formData.append('documentLanguage', documentLanguage);
+    if (enqueueProcessing) {
+      formData.append('enqueueProcessing', 'true');
+    }
     return formData;
   }
 
   processDocument(id: string): Observable<DocumentDetailDto> {
-    return this.http.post<DocumentDetailDto>(`${this.apiUrl}/${id}/process`, {});
+    return this.http.post<DocumentDetailDto>(`${this.apiUrl}/${id}/process`, {}, { observe: 'body' });
   }
 
   getJsonExportUrl(id: string): string {
