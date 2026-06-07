@@ -20,17 +20,20 @@ public class DocumentsController : ControllerBase
     };
 
     private readonly IDocumentService _documentService;
+    private readonly IDocumentProcessingService _documentProcessingService;
     private readonly ILogger<DocumentsController> _logger;
     private readonly DocumentUploadOptions _uploadOptions;
     private readonly IWebHostEnvironment _environment;
 
     public DocumentsController(
         IDocumentService documentService,
+        IDocumentProcessingService documentProcessingService,
         ILogger<DocumentsController> logger,
         IOptions<DocumentUploadOptions> uploadOptions,
         IWebHostEnvironment environment)
     {
         _documentService = documentService;
+        _documentProcessingService = documentProcessingService;
         _logger = logger;
         _uploadOptions = uploadOptions.Value;
         _environment = environment;
@@ -140,6 +143,22 @@ public class DocumentsController : ControllerBase
         var response = await _documentService.UploadDocumentAsync(requestDto, cancellationToken);
         _logger.LogInformation("Document uploaded {DocumentId}", response.DocumentId);
         return CreatedAtAction(nameof(GetDocument), new { id = response.DocumentId }, response);
+    }
+
+    [HttpPost("{id:guid}/process")]
+    [ProducesResponseType(typeof(DocumentDetailDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<DocumentDetailDto>> ProcessDocument(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var processed = await _documentProcessingService.ProcessDocumentAsync(id, cancellationToken);
+            return Ok(processed);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
     }
 
     private static bool TryMapDocumentType(string value, out DocumentType documentType)

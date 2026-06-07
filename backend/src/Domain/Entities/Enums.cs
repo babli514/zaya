@@ -36,8 +36,8 @@ public enum ExtractionJobStatus
 public enum OcrEngineType
 {
     Unknown,
+    NativePdfText,
     Tesseract,
-    AzureRead,
-    GoogleVision,
-    Custom
+    GeminiFlashLite,
+    VisionFallback
 }

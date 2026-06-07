@@ -2,6 +2,7 @@ using FinancialOCR.Application.Services;
 using FinancialOCR.Infrastructure.Persistence;
 using FinancialOCR.Api.Middleware;
 using FinancialOCR.Api.Options;
+using FinancialOCR.Api.Services;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
@@ -45,7 +46,17 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 );
 
 builder.Services.Configure<DocumentUploadOptions>(builder.Configuration.GetSection(DocumentUploadOptions.SectionName));
+builder.Services.Configure<OcrOptions>(builder.Configuration.GetSection(OcrOptions.SectionName));
 builder.Services.AddScoped<IDocumentService, DocumentService>();
+builder.Services.AddScoped<IDocumentProcessingService, DocumentProcessingService>();
+builder.Services.AddScoped<IOcrRouter, OcrRouter>();
+builder.Services.AddScoped<ILanguageDetectionService, LanguageDetectionService>();
+builder.Services.AddScoped<IFinancialFieldExtractor, FinancialFieldExtractor>();
+builder.Services.AddScoped<IFinancialDocumentValidator, FinancialDocumentValidator>();
+builder.Services.AddScoped<IOcrProvider, NativePdfTextOcrProvider>();
+builder.Services.AddScoped<IOcrProvider, TesseractOcrProvider>();
+builder.Services.AddScoped<IOcrProvider, GeminiFlashLiteOcrProvider>();
+builder.Services.AddScoped<IOcrProvider, VisionFallbackOcrProvider>();
 
 // Health checks
 builder.Services.AddHealthChecks()
