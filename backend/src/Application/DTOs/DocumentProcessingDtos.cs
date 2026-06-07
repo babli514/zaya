@@ -37,7 +37,7 @@ public class OcrRequest
 public class OcrResult
 {
     public string RawText { get; set; } = string.Empty;
-    public int PageCount { get; set; }
+    public int? PageCount { get; set; }
     public List<string> Warnings { get; set; } = new();
     public DocumentLanguage RequestedDocumentLanguage { get; set; }
     public DocumentLanguage DetectedLanguage { get; set; }

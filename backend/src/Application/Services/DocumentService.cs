@@ -250,9 +250,16 @@ public class DocumentService : IDocumentService
             ModelName = latestExtractionJob?.FallbackUsed == true
                 ? latestExtractionJob.FallbackModelName ?? latestExtractionJob.PrimaryModelName
                 : latestExtractionJob?.PrimaryModelName,
+            PrimaryLatencyMs = latestExtractionJob?.PrimaryLatencyMs ?? 0,
+            FallbackLatencyMs = latestExtractionJob?.FallbackLatencyMs,
             ProviderLatencyMs = latestExtractionJob?.FallbackUsed == true
-                ? latestExtractionJob.FallbackProviderLatencyMs ?? latestExtractionJob.PrimaryProviderLatencyMs
-                : latestExtractionJob?.PrimaryProviderLatencyMs
+                ? latestExtractionJob.FallbackLatencyMs ?? latestExtractionJob.PrimaryLatencyMs
+                : latestExtractionJob?.PrimaryLatencyMs,
+            TotalProcessingLatencyMs = latestExtractionJob == null
+                ? 0
+                : latestExtractionJob.PrimaryLatencyMs + (latestExtractionJob.FallbackLatencyMs ?? 0),
+            EstimatedProviderCost = latestExtractionJob?.EstimatedProviderCost,
+            PageCount = latestExtractionJob?.PageCount
         };
     }
 
@@ -376,7 +383,7 @@ public class DocumentService : IDocumentService
             OcrEngineType = latestExtractionJob?.PrimaryOcrEngine ?? OcrEngineType.Unknown,
             ProviderName = latestExtractionJob?.PrimaryProviderName ?? string.Empty,
             ModelName = latestExtractionJob?.PrimaryModelName ?? string.Empty,
-            ProviderLatencyMs = latestExtractionJob?.PrimaryProviderLatencyMs,
+            ProviderLatencyMs = latestExtractionJob?.PrimaryLatencyMs,
             LineItems = extractedDocument.LineItems.Select(li => new FinancialExtractionLineItem
             {
                 Description = li.Description,

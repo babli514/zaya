@@ -96,6 +96,10 @@ type UiLanguage = 'en' | 'fr';
             <p>{{ formatDate(document.processedAtUtc) }}</p>
           </div>
           <div class="info-item">
+            <label>Engine used</label>
+            <p>{{ getEngineUsedLabel() }}</p>
+          </div>
+          <div class="info-item">
             <label>Primary OCR engine used</label>
             <p>{{ result?.primaryOcrEngineUsed || '-' }}</p>
           </div>
@@ -118,6 +122,22 @@ type UiLanguage = 'en' | 'fr';
           <div class="info-item">
             <label>Provider latency ms</label>
             <p>{{ result?.providerLatencyMs ?? '-' }}</p>
+          </div>
+          <div class="info-item">
+            <label>Primary latency ms</label>
+            <p>{{ result?.primaryLatencyMs ?? '-' }}</p>
+          </div>
+          <div class="info-item">
+            <label>Fallback latency ms</label>
+            <p>{{ result?.fallbackLatencyMs ?? '-' }}</p>
+          </div>
+          <div class="info-item">
+            <label>Processing time</label>
+            <p>{{ formatProcessingTime(result?.totalProcessingLatencyMs) }}</p>
+          </div>
+          <div class="info-item">
+            <label>Estimated provider cost</label>
+            <p>{{ formatEstimatedCost(result?.estimatedProviderCost) }}</p>
           </div>
           <div class="info-item">
             <label>Overall confidence</label>
@@ -743,6 +763,34 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     }
 
     return `${(value * 100).toFixed(1)}%`;
+  }
+
+  formatProcessingTime(value?: number | null): string {
+    if (typeof value !== 'number') {
+      return '-';
+    }
+
+    return `${value} ms`;
+  }
+
+  formatEstimatedCost(value?: number | null): string {
+    if (typeof value !== 'number') {
+      return '-';
+    }
+
+    return `$${value.toFixed(4)}`;
+  }
+
+  getEngineUsedLabel(): string {
+    if (!this.result) {
+      return '-';
+    }
+
+    if (this.result.fallbackUsed && this.result.fallbackOcrEngineUsed) {
+      return this.result.fallbackOcrEngineUsed;
+    }
+
+    return this.result.primaryOcrEngineUsed || '-';
   }
 
   getWarningMessage(warning: ValidationWarningDto): string {

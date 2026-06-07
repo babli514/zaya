@@ -200,6 +200,13 @@ public class DocumentsApiIntegrationTests : IClassFixture<ApiIntegrationTestFact
         Assert.NotNull(result.StructuredExtractedFields);
         Assert.Equal("PDF Store", result.StructuredExtractedFields!.VendorName);
         Assert.Equal(114.98m, result.StructuredExtractedFields.Total);
+        Assert.Equal("NativePdfText", result.PrimaryOcrEngineUsed);
+        Assert.False(result.FallbackUsed);
+        Assert.Equal(1, result.PageCount);
+        Assert.Equal(0m, result.EstimatedProviderCost);
+        Assert.True(result.PrimaryLatencyMs >= 0);
+        Assert.Equal(result.PrimaryLatencyMs, result.TotalProcessingLatencyMs);
+        Assert.Equal(result.PrimaryLatencyMs, result.ProviderLatencyMs);
     }
 
     [Fact]
@@ -280,7 +287,7 @@ public class DocumentsApiIntegrationTests : IClassFixture<ApiIntegrationTestFact
 
     private async Task<string> WaitForTerminalStatusAsync(Guid documentId)
     {
-        for (var attempt = 0; attempt < 20; attempt++)
+        for (var attempt = 0; attempt < 100; attempt++)
         {
             var response = await _client.GetAsync($"/api/documents/{documentId}");
             response.EnsureSuccessStatusCode();

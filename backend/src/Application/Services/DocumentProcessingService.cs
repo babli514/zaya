@@ -3,6 +3,7 @@ using FinancialOCR.Domain.Entities;
 using FinancialOCR.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace FinancialOCR.Application.Services;
@@ -129,13 +130,18 @@ public class DocumentProcessingService : IDocumentProcessingService
             };
 
             _logger.LogInformation("OCR primary start. DocumentId={DocumentId}, Provider={Provider}", document.Id, primaryProvider.EngineType);
+            var primaryStopwatch = Stopwatch.StartNew();
             var primaryOcrResult = await primaryProvider.ExtractAsync(primaryRequest, cancellationToken);
-            _logger.LogInformation("OCR primary completed. DocumentId={DocumentId}, Provider={Provider}, LatencyMs={LatencyMs}", document.Id, primaryOcrResult.ProviderName, primaryOcrResult.ProviderLatencyMs);
+            primaryStopwatch.Stop();
+            var primaryLatencyMs = primaryStopwatch.ElapsedMilliseconds;
+            _logger.LogInformation("OCR primary completed. DocumentId={DocumentId}, Provider={Provider}, LatencyMs={LatencyMs}", document.Id, primaryOcrResult.ProviderName, primaryLatencyMs);
 
             extractionJob.PrimaryOcrEngine = primaryOcrResult.OcrEngineType;
             extractionJob.PrimaryProviderName = primaryOcrResult.ProviderName;
             extractionJob.PrimaryModelName = primaryOcrResult.ModelName;
-            extractionJob.PrimaryProviderLatencyMs = primaryOcrResult.ProviderLatencyMs;
+            extractionJob.PrimaryLatencyMs = primaryLatencyMs;
+            extractionJob.EstimatedProviderCost = primaryOcrResult.ProviderCostEstimate;
+            extractionJob.PageCount = primaryOcrResult.PageCount;
             extractionJob.FallbackUsed = false;
 
             var processing = await RunExtractionAndValidationAsync(document, primaryOcrResult, cancellationToken);
@@ -157,6 +163,8 @@ public class DocumentProcessingService : IDocumentProcessingService
             extractionJob.DetectedLanguage = processing.DetectedLanguage;
             extractionJob.RawText = processing.OcrResult.RawText;
             extractionJob.OverallConfidence = finalConfidence;
+            extractionJob.PageCount ??= processing.OcrResult.PageCount;
+            extractionJob.EstimatedProviderCost ??= processing.OcrResult.ProviderCostEstimate;
             extractionJob.WarningsJson = JsonSerializer.Serialize(allWarnings);
             extractionJob.Status = ExtractionJobStatus.Completed;
             extractionJob.CompletedAtUtc = DateTime.UtcNow;
@@ -357,14 +365,20 @@ public class DocumentProcessingService : IDocumentProcessingService
         try
         {
             _logger.LogInformation("OCR fallback start. DocumentId={DocumentId}, Provider={Provider}", document.Id, fallbackProvider.EngineType);
+            var fallbackStopwatch = Stopwatch.StartNew();
             var fallbackOcrResult = await fallbackProvider.ExtractAsync(fallbackRequest, cancellationToken);
-            _logger.LogInformation("OCR fallback completed. DocumentId={DocumentId}, Provider={Provider}, LatencyMs={LatencyMs}", document.Id, fallbackOcrResult.ProviderName, fallbackOcrResult.ProviderLatencyMs);
+            fallbackStopwatch.Stop();
+            var fallbackLatencyMs = fallbackStopwatch.ElapsedMilliseconds;
+            _logger.LogInformation("OCR fallback completed. DocumentId={DocumentId}, Provider={Provider}, LatencyMs={LatencyMs}", document.Id, fallbackOcrResult.ProviderName, fallbackLatencyMs);
 
             var fallbackAttempt = await RunExtractionAndValidationAsync(document, fallbackOcrResult, cancellationToken);
             extractionJob.FallbackOcrEngine = fallbackOcrResult.OcrEngineType;
             extractionJob.FallbackProviderName = fallbackOcrResult.ProviderName;
             extractionJob.FallbackModelName = fallbackOcrResult.ModelName;
-            extractionJob.FallbackProviderLatencyMs = fallbackOcrResult.ProviderLatencyMs;
+            extractionJob.FallbackLatencyMs = fallbackLatencyMs;
+
+            extractionJob.PageCount ??= fallbackOcrResult.PageCount;
+            extractionJob.EstimatedProviderCost = (extractionJob.EstimatedProviderCost ?? 0m) + (fallbackOcrResult.ProviderCostEstimate ?? 0m);
 
             if (fallbackAttempt.ValidationResult.IsValid || !primaryAttempt.ValidationResult.IsValid)
             {

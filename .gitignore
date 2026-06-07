@@ -17,6 +17,8 @@ obj/
 *.db-shm
 *.db-wal
 Migrations/
+!backend/src/Infrastructure/Persistence/Migrations/
+!backend/src/Infrastructure/Persistence/Migrations/**
 
 # NuGet
 *.nupkg

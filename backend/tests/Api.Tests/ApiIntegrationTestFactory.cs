@@ -79,6 +79,9 @@ public class ApiIntegrationTestFactory : WebApplicationFactory<Program>
                 OcrEngineType = EngineType,
                 ProviderName = "FakeNativePdf",
                 ModelName = "fake-native-pdf",
+                ProviderLatencyMs = 10,
+                ProviderCostEstimate = 0m,
+                PageCount = 1,
                 Confidence = 0.95m
             });
         }
@@ -100,6 +103,9 @@ public class ApiIntegrationTestFactory : WebApplicationFactory<Program>
                 OcrEngineType = EngineType,
                 ProviderName = "FakeTesseract",
                 ModelName = "fake-tesseract",
+                ProviderLatencyMs = 12,
+                ProviderCostEstimate = 0m,
+                PageCount = 1,
                 Confidence = 0.95m
             });
         }
@@ -121,6 +127,9 @@ public class ApiIntegrationTestFactory : WebApplicationFactory<Program>
                 OcrEngineType = OcrEngineType.GeminiFlashLite,
                 ProviderName = "FakeGemini",
                 ModelName = "fake-gemini",
+                ProviderLatencyMs = 40,
+                ProviderCostEstimate = 0.0025m,
+                PageCount = 1,
                 Confidence = 0.99m
             });
         }

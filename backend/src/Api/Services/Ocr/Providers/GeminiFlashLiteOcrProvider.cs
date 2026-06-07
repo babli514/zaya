@@ -42,6 +42,7 @@ public class GeminiFlashLiteOcrProvider : IOcrProvider
             ProviderName = string.IsNullOrWhiteSpace(settings.ProviderName) ? "GoogleGemini" : settings.ProviderName,
             ModelName = settings.Model,
             ProviderLatencyMs = 0,
+            ProviderCostEstimate = null,
             Confidence = 0m
         });
     }

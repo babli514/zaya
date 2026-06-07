@@ -76,7 +76,12 @@ public class DocumentResultDto
     public bool FallbackUsed { get; set; }
     public string? ProviderName { get; set; }
     public string? ModelName { get; set; }
+    public long PrimaryLatencyMs { get; set; }
+    public long? FallbackLatencyMs { get; set; }
     public long? ProviderLatencyMs { get; set; }
+    public long TotalProcessingLatencyMs { get; set; }
+    public decimal? EstimatedProviderCost { get; set; }
+    public int? PageCount { get; set; }
 }
 
 public class DocumentResultMetadataDto

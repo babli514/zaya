@@ -100,7 +100,12 @@ export interface DocumentResultDto {
   fallbackUsed: boolean;
   providerName?: string | null;
   modelName?: string | null;
+  primaryLatencyMs: number;
+  fallbackLatencyMs?: number | null;
   providerLatencyMs?: number | null;
+  totalProcessingLatencyMs: number;
+  estimatedProviderCost?: number | null;
+  pageCount?: number | null;
 }
 
 export interface DocumentRawTextDto {

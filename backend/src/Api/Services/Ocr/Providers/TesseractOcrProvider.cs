@@ -82,6 +82,7 @@ public class TesseractOcrProvider : IOcrProvider
             ProviderName = "Tesseract",
             ModelName = executableLanguage,
             ProviderLatencyMs = stopwatch.ElapsedMilliseconds,
+            ProviderCostEstimate = 0m,
             Confidence = confidence
         });
     }

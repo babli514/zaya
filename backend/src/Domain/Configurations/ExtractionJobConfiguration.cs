@@ -36,7 +36,8 @@ public class ExtractionJobConfiguration : IEntityTypeConfiguration<ExtractionJob
         builder.Property(e => e.PrimaryModelName)
             .HasMaxLength(200);
 
-        builder.Property(e => e.PrimaryProviderLatencyMs);
+        builder.Property(e => e.PrimaryLatencyMs)
+            .IsRequired();
 
         builder.Property(e => e.FallbackProviderName)
             .HasMaxLength(200);
@@ -44,7 +45,12 @@ public class ExtractionJobConfiguration : IEntityTypeConfiguration<ExtractionJob
         builder.Property(e => e.FallbackModelName)
             .HasMaxLength(200);
 
-        builder.Property(e => e.FallbackProviderLatencyMs);
+        builder.Property(e => e.FallbackLatencyMs);
+
+        builder.Property(e => e.EstimatedProviderCost)
+            .HasColumnType("decimal(18,6)");
+
+        builder.Property(e => e.PageCount);
 
         builder.Property(e => e.WarningsJson)
             .HasColumnType("nvarchar(max)");

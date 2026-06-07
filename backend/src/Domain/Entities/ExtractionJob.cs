@@ -20,10 +20,12 @@ public class ExtractionJob
     public bool FallbackUsed { get; set; }
     public string? PrimaryProviderName { get; set; }
     public string? PrimaryModelName { get; set; }
-    public long? PrimaryProviderLatencyMs { get; set; }
+    public long PrimaryLatencyMs { get; set; }
     public string? FallbackProviderName { get; set; }
     public string? FallbackModelName { get; set; }
-    public long? FallbackProviderLatencyMs { get; set; }
+    public long? FallbackLatencyMs { get; set; }
+    public decimal? EstimatedProviderCost { get; set; }
+    public int? PageCount { get; set; }
 
     public string? RawText { get; set; }
 

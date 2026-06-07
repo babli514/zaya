@@ -62,6 +62,7 @@ public class NativePdfTextOcrProvider : IOcrProvider
             ProviderName = "NativePdf",
             ModelName = "PdfPig",
             ProviderLatencyMs = stopwatch.ElapsedMilliseconds,
+            ProviderCostEstimate = 0m,
             Confidence = confidence
         });
     }
