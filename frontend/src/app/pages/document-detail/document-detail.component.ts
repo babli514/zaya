@@ -2,7 +2,7 @@ import { Component, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, RouterModule } from '@angular/router';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
-import { Subscription, catchError, forkJoin, of, switchMap, timer } from 'rxjs';
+import { Subscription, catchError, of, switchMap, timer, timeout } from 'rxjs';
 import { DocumentDetailDto, DocumentResultDto, DocumentService, ValidationWarningDto } from '../../services/document.service';
 
 type UiLanguage = 'en' | 'fr';
@@ -13,7 +13,7 @@ type UiLanguage = 'en' | 'fr';
   imports: [CommonModule, RouterModule],
   template: `
     <div class="container">
-      <div *ngIf="loading" class="loading">Loading document details...</div>
+      <div *ngIf="loading" class="loading">Loading document details (route-check build)...</div>
 
       <div *ngIf="!loading && loadError" class="not-found">
         <p>{{ loadError }}</p>
@@ -187,9 +187,9 @@ type UiLanguage = 'en' | 'fr';
           <p>{{ result.validationResult.summary }}</p>
         </div>
 
-        <div *ngIf="result && result.bilingualWarnings.length > 0" class="warnings">
+        <div *ngIf="(result?.bilingualWarnings?.length ?? 0) > 0" class="warnings">
           <h3>Validation warnings</h3>
-          <div class="warning-item" *ngFor="let warning of result.bilingualWarnings" [ngClass]="getWarningSeverityClass(warning)">
+          <div class="warning-item" *ngFor="let warning of (result?.bilingualWarnings ?? [])" [ngClass]="getWarningSeverityClass(warning)">
             <div class="warning-meta">
               <span class="warning-code">{{ warning.code }}</span>
               <span class="warning-severity">{{ warning.severity }}</span>
@@ -590,6 +590,9 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
   processingProgressMessage = '';
   private routeSubscription: Subscription | null = null;
   private statusPollingSubscription: Subscription | null = null;
+  private previewFileSubscription: Subscription | null = null;
+  private previewObjectUrl = '';
+  private loadingWatchdog: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly documentService: DocumentService,
@@ -619,17 +622,41 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
       if (id) {
         this.stopStatusPolling();
         this.loadDocument(id);
+        return;
       }
+
+      this.stopStatusPolling();
+      this.releasePreviewObjectUrl();
+      this.clearLoadingWatchdog();
+      this.loading = false;
+      this.document = null;
+      this.result = null;
+      this.engineBadges = [];
+      this.loadError = 'Document id is missing from the route.';
     });
   }
 
   ngOnDestroy(): void {
     this.routeSubscription?.unsubscribe();
     this.stopStatusPolling();
+    this.releasePreviewObjectUrl();
+    this.clearLoadingWatchdog();
   }
 
   loadDocument(id: string): void {
     this.stopStatusPolling();
+    this.releasePreviewObjectUrl();
+    this.clearLoadingWatchdog();
+    this.loadingWatchdog = setTimeout(() => {
+      if (!this.loading) {
+        return;
+      }
+
+      this.loading = false;
+      if (!this.document && !this.result && !this.loadError) {
+        this.loadError = 'Document is taking longer than expected to load. Please refresh and try again.';
+      }
+    }, 20000);
     this.loading = true;
     this.loadError = '';
     this.actionError = '';
@@ -641,29 +668,66 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     this.isImagePreview = false;
     this.previewFailed = false;
 
-    forkJoin({
-      document: this.documentService.getDocument(id),
-      result: this.documentService.getDocumentResult(id).pipe(catchError(() => of(null)))
-    }).subscribe({
-      next: ({ document, result }) => {
-        this.document = document;
-        this.result = result;
-        this.jsonExportUrl = this.documentService.getJsonExportUrl(document.id);
-        this.csvExportUrl = this.documentService.getCsvExportUrl(document.id);
-        this.previewUrl = this.documentService.getDocumentFileUrl(document.id);
-        this.safePreviewUrl = this.sanitizer.bypassSecurityTrustResourceUrl(this.previewUrl);
-        const contentType = (document.contentType || '').toLowerCase();
-        this.isPdfPreview = contentType.includes('application/pdf');
-        this.isImagePreview = contentType.startsWith('image/');
-        this.previewFailed = false;
-        this.engineBadges = this.buildEngineBadges(result);
-        this.loading = false;
-      },
-      error: () => {
+    let documentResolved = false;
+    let completedCalls = 0;
+
+    const finalizeCall = () => {
+      completedCalls += 1;
+      if (completedCalls < 2) {
+        return;
+      }
+
+      if (!documentResolved) {
         this.document = null;
         this.result = null;
-        this.loading = false;
+        this.engineBadges = [];
         this.loadError = 'Document not found or could not be loaded.';
+      }
+
+      this.loading = false;
+      this.clearLoadingWatchdog();
+    };
+
+
+    this.documentService.getDocument(id).pipe(timeout(15000), catchError(() => of(null))).subscribe({
+      next: (document) => {
+        try {
+          if (document) {
+            this.applyDocumentState(document);
+            documentResolved = true;
+          }
+        } catch (err) {
+          this.loadError = this.getErrorMessage(err);
+        } finally {
+          finalizeCall();
+        }
+      },
+      error: () => {
+        finalizeCall();
+      }
+    });
+
+    this.documentService.getDocumentResult(id).pipe(timeout(15000), catchError(() => of(null))).subscribe({
+      next: (result) => {
+        try {
+          const normalizedResult = this.normalizeResult(result);
+          this.result = normalizedResult;
+          this.engineBadges = this.buildEngineBadges(normalizedResult);
+
+          if (!documentResolved && normalizedResult?.document) {
+            this.applyDocumentState(this.toDetailFromResult(normalizedResult));
+            documentResolved = true;
+          }
+        } catch (err) {
+          this.loadError = this.getErrorMessage(err);
+        } finally {
+          finalizeCall();
+        }
+      },
+      error: () => {
+        this.result = null;
+        this.engineBadges = [];
+        finalizeCall();
       }
     });
   }
@@ -844,8 +908,9 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
 
           this.documentService.getDocumentResult(documentId).pipe(catchError(() => of(null))).subscribe({
             next: (result) => {
-              this.result = result;
-              this.engineBadges = this.buildEngineBadges(result);
+              const normalizedResult = this.normalizeResult(result);
+              this.result = normalizedResult;
+              this.engineBadges = this.buildEngineBadges(normalizedResult);
               if (document.status === 'Failed') {
                 this.actionError = this.failureReason;
               }
@@ -870,6 +935,79 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     this.statusPollingSubscription?.unsubscribe();
     this.statusPollingSubscription = null;
     this.polling = false;
+  }
+
+  private applyDocumentState(document: DocumentDetailDto): void {
+    this.document = document;
+    this.jsonExportUrl = this.documentService.getJsonExportUrl(document.id);
+    this.csvExportUrl = this.documentService.getCsvExportUrl(document.id);
+    const apiPreviewUrl = this.documentService.getDocumentFileUrl(document.id);
+    this.previewUrl = apiPreviewUrl;
+    this.safePreviewUrl = this.sanitizer.bypassSecurityTrustResourceUrl(apiPreviewUrl);
+    const contentType = (document.contentType || '').toLowerCase();
+    this.isPdfPreview = contentType.includes('application/pdf');
+    this.isImagePreview = contentType.startsWith('image/');
+    this.previewFailed = false;
+    this.loadPreviewFile(document.id);
+  }
+
+  private clearLoadingWatchdog(): void {
+    if (this.loadingWatchdog) {
+      clearTimeout(this.loadingWatchdog);
+      this.loadingWatchdog = null;
+    }
+  }
+
+  private loadPreviewFile(documentId: string): void {
+    this.previewFileSubscription?.unsubscribe();
+    this.previewFileSubscription = this.documentService.getDocumentFile(documentId).subscribe({
+      next: (blob) => {
+        this.releasePreviewObjectUrl();
+        this.previewObjectUrl = URL.createObjectURL(blob);
+        this.previewUrl = this.previewObjectUrl;
+        this.safePreviewUrl = this.sanitizer.bypassSecurityTrustResourceUrl(this.previewObjectUrl);
+      },
+      error: () => {
+        this.releasePreviewObjectUrl();
+      }
+    });
+  }
+
+  private releasePreviewObjectUrl(): void {
+    this.previewFileSubscription?.unsubscribe();
+    this.previewFileSubscription = null;
+
+    if (this.previewObjectUrl) {
+      URL.revokeObjectURL(this.previewObjectUrl);
+      this.previewObjectUrl = '';
+    }
+  }
+
+  private toDetailFromResult(result: DocumentResultDto): DocumentDetailDto {
+    return {
+      id: result.document.id,
+      originalFileName: result.document.originalFileName,
+      storedFileName: result.document.storedFileName,
+      contentType: result.document.contentType,
+      fileSizeBytes: 0,
+      documentType: result.document.documentType,
+      documentLanguage: result.requestedDocumentLanguage,
+      status: result.document.status,
+      uploadedAtUtc: result.document.uploadedAtUtc,
+      processedAtUtc: result.document.processedAtUtc
+    };
+  }
+
+  private normalizeResult(result: DocumentResultDto | null): DocumentResultDto | null {
+    if (!result) {
+      return null;
+    }
+
+    return {
+      ...result,
+      bilingualWarnings: Array.isArray(result.bilingualWarnings) ? result.bilingualWarnings : [],
+      lineItems: Array.isArray(result.lineItems) ? result.lineItems : []
+    };
   }
 
   private buildEngineBadges(result: DocumentResultDto | null): string[] {

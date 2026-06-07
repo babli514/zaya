@@ -143,6 +143,10 @@ export class DocumentService {
     return this.http.get<DocumentRawTextDto>(`${this.apiUrl}/${id}/raw-text`);
   }
 
+  getDocumentFile(id: string): Observable<Blob> {
+    return this.http.get(`${this.apiUrl}/${id}/file`, { responseType: 'blob' });
+  }
+
   getDocumentFileUrl(id: string): string {
     return `${this.apiUrl}/${id}/file`;
   }

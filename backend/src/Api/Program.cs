@@ -159,7 +159,7 @@ if (!string.IsNullOrWhiteSpace(apiSecurityOptions.ApiKey))
         var isHealthRequest = path.StartsWithSegments("/api/health", StringComparison.OrdinalIgnoreCase);
         var isDevelopmentSwaggerRequest = app.Environment.IsDevelopment() && path.StartsWithSegments("/swagger", StringComparison.OrdinalIgnoreCase);
 
-        if (isHealthRequest || isDevelopmentSwaggerRequest)
+        if (HttpMethods.IsOptions(context.Request.Method) || isHealthRequest || isDevelopmentSwaggerRequest)
         {
             await next();
             return;
