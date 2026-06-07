@@ -131,8 +131,7 @@ namespace Infrastructure.Persistence.Migrations
                         name: "FK_ExtractedFinancialDocuments_Documents_DocumentId",
                         column: x => x.DocumentId,
                         principalTable: "Documents",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        principalColumn: "Id");
                     table.ForeignKey(
                         name: "FK_ExtractedFinancialDocuments_ExtractionJobs_ExtractionJobId",
                         column: x => x.ExtractionJobId,
@@ -177,8 +176,7 @@ namespace Infrastructure.Persistence.Migrations
                         name: "FK_ProviderUsageRecords_ExtractionJobs_ExtractionJobId",
                         column: x => x.ExtractionJobId,
                         principalTable: "ExtractionJobs",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.SetNull);
+                        principalColumn: "Id");
                 });
 
             migrationBuilder.CreateTable(

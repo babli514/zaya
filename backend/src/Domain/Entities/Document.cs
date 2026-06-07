@@ -39,7 +39,7 @@ public class Document
 
     // Back-compat properties used by older services - not separately mapped
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
-    public string FileName { get => OriginalFileName; set => OriginalFileName = value; }
+    public string FileName { get => OriginalFileName ?? string.Empty; set => OriginalFileName = value; }
 
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public ProcessingStatus Status { get => ProcessingStatus; set => ProcessingStatus = value; }

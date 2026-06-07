@@ -44,7 +44,7 @@ public class ExtractedFinancialDocumentConfiguration : IEntityTypeConfiguration<
         builder.HasOne(e => e.Document)
             .WithMany()
             .HasForeignKey(e => e.DocumentId)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.NoAction);
 
         builder.HasOne(e => e.ExtractionJob)
             .WithMany(j => j.ExtractedFinancialDocuments)

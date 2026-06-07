@@ -20,7 +20,7 @@ public class ProviderUsageRecordConfiguration : IEntityTypeConfiguration<Provide
         builder.HasOne(e => e.ExtractionJob)
             .WithMany()
             .HasForeignKey(e => e.ExtractionJobId)
-            .OnDelete(DeleteBehavior.SetNull);
+            .OnDelete(DeleteBehavior.NoAction);
 
         builder.Property(e => e.ProviderName)
             .HasMaxLength(200)

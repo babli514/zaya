@@ -427,7 +427,7 @@ namespace Infrastructure.Persistence.Migrations
                     b.HasOne("FinancialOCR.Domain.Entities.Document", "Document")
                         .WithMany()
                         .HasForeignKey("DocumentId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.HasOne("FinancialOCR.Domain.Entities.ExtractionJob", "ExtractionJob")
@@ -485,7 +485,7 @@ namespace Infrastructure.Persistence.Migrations
                     b.HasOne("FinancialOCR.Domain.Entities.ExtractionJob", "ExtractionJob")
                         .WithMany()
                         .HasForeignKey("ExtractionJobId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .OnDelete(DeleteBehavior.NoAction);
 
                     b.Navigation("Document");
 

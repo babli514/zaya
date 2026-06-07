@@ -12,7 +12,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260607174204_InitialCreate")]
+    [Migration("20260607183010_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -430,7 +430,7 @@ namespace Infrastructure.Persistence.Migrations
                     b.HasOne("FinancialOCR.Domain.Entities.Document", "Document")
                         .WithMany()
                         .HasForeignKey("DocumentId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.HasOne("FinancialOCR.Domain.Entities.ExtractionJob", "ExtractionJob")
@@ -488,7 +488,7 @@ namespace Infrastructure.Persistence.Migrations
                     b.HasOne("FinancialOCR.Domain.Entities.ExtractionJob", "ExtractionJob")
                         .WithMany()
                         .HasForeignKey("ExtractionJobId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .OnDelete(DeleteBehavior.NoAction);
 
                     b.Navigation("Document");
 
