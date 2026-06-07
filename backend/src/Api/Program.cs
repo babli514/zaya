@@ -70,9 +70,9 @@ builder.Services.AddHealthChecks()
 
 var app = builder.Build();
 
-// Migrations
-using (var scope = app.Services.CreateScope())
+if (!app.Environment.IsEnvironment("Testing"))
 {
+    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
 }
@@ -99,4 +99,8 @@ app.MapHealthChecks("/api/health");
 app.MapControllers();
 
 app.Run();
+
+public partial class Program
+{
+}
 

@@ -25,7 +25,7 @@ public class GlobalExceptionHandlingMiddleware
         }
     }
 
-    private static Task HandleExceptionAsync(HttpContext context, Exception exception)
+    private static async Task HandleExceptionAsync(HttpContext context, Exception exception)
     {
         Log.Error(exception, "An unhandled exception occurred");
 
@@ -39,6 +39,7 @@ public class GlobalExceptionHandlingMiddleware
             detail = exception.Message
         };
 
-        return context.Response.WriteAsJsonAsync(response);
+        var json = JsonSerializer.Serialize(response);
+        await context.Response.WriteAsync(json);
     }
 }
