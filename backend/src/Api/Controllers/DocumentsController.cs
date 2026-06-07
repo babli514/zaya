@@ -4,6 +4,9 @@ using FinancialOCR.Application.Services;
 using FinancialOCR.Domain.Entities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using System.Globalization;
+using System.Text;
+using System.Text.Json;
 
 namespace FinancialOCR.Api.Controllers;
 
@@ -225,6 +228,63 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    [HttpGet("{id:guid}/export/json")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ExportJson(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await _documentService.GetDocumentResultAsync(id, cancellationToken);
+            var content = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
+            var bytes = new UTF8Encoding(false).GetBytes(content);
+            var fileName = BuildExportFileName(result.Document.OriginalFileName, id, "export", "json");
+            return File(bytes, "application/json; charset=utf-8", fileName);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    [HttpGet("{id:guid}/export/csv")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ExportCsv(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await _documentService.GetDocumentResultAsync(id, cancellationToken);
+            var csv = BuildDocumentCsv(result);
+            var bytes = BuildUtf8BomBytes(csv);
+            var fileName = BuildExportFileName(result.Document.OriginalFileName, id, "export", "csv");
+            return File(bytes, "text/csv; charset=utf-8", fileName);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    [HttpGet("{id:guid}/export/line-items.csv")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ExportLineItemsCsv(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await _documentService.GetDocumentResultAsync(id, cancellationToken);
+            var csv = BuildLineItemsCsv(result);
+            var bytes = BuildUtf8BomBytes(csv);
+            var fileName = BuildExportFileName(result.Document.OriginalFileName, id, "line-items", "csv");
+            return File(bytes, "text/csv; charset=utf-8", fileName);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
     private static bool TryMapDocumentType(string value, out DocumentType documentType)
     {
         if (string.Equals(value, "receipt", StringComparison.OrdinalIgnoreCase))
@@ -273,6 +333,85 @@ public class DocumentsController : ControllerBase
         return false;
     }
 
+    private static string BuildDocumentCsv(DocumentResultDto result)
+    {
+        var fields = result.StructuredExtractedFields;
+        var validation = result.ValidationResult;
+
+        var headers = new[]
+        {
+            "DocumentId", "DocumentType", "RequestedLanguage", "DetectedLanguage", "OriginalFileName",
+            "VendorName", "CustomerName", "DocumentNumber", "DocumentDate", "DueDate", "Currency",
+            "Subtotal", "GST/TPS", "QST/TVQ", "HST/TVH", "PST/TVP", "Tip/Pourboire", "Total",
+            "Confidence", "IsValidated", "ValidationSummary"
+        };
+
+        var values = new[]
+        {
+            result.Document.Id.ToString(),
+            result.Document.DocumentType,
+            result.RequestedDocumentLanguage,
+            result.DetectedDocumentLanguage,
+            result.Document.OriginalFileName,
+            fields?.VendorName ?? string.Empty,
+            fields?.CustomerName ?? string.Empty,
+            fields?.DocumentNumber ?? string.Empty,
+            FormatDate(fields?.DocumentDate),
+            FormatDate(fields?.DueDate),
+            fields?.Currency ?? string.Empty,
+            FormatDecimal(fields?.Subtotal),
+            FormatDecimal(fields?.Gst),
+            FormatDecimal(fields?.Qst),
+            FormatDecimal(fields?.Hst),
+            FormatDecimal(fields?.Pst),
+            FormatDecimal(fields?.Tip),
+            FormatDecimal(fields?.Total),
+            FormatDecimal(result.Confidence),
+            (validation?.IsValidated ?? false).ToString(),
+            validation?.Summary ?? string.Empty
+        };
+
+        var builder = new StringBuilder();
+        builder.AppendLine(BuildCsvRow(headers));
+        builder.AppendLine(BuildCsvRow(values));
+        return builder.ToString();
+    }
+
+    private static string BuildLineItemsCsv(DocumentResultDto result)
+    {
+        var headers = new[]
+        {
+            "DocumentId", "DocumentType", "RequestedLanguage", "DetectedLanguage", "OriginalFileName",
+            "LineItemIndex", "Description", "Quantity", "UnitPrice", "Amount", "LineItemConfidence"
+        };
+
+        var builder = new StringBuilder();
+        builder.AppendLine(BuildCsvRow(headers));
+
+        for (var i = 0; i < result.LineItems.Count; i++)
+        {
+            var lineItem = result.LineItems[i];
+            var values = new[]
+            {
+                result.Document.Id.ToString(),
+                result.Document.DocumentType,
+                result.RequestedDocumentLanguage,
+                result.DetectedDocumentLanguage,
+                result.Document.OriginalFileName,
+                (i + 1).ToString(CultureInfo.InvariantCulture),
+                lineItem.Description,
+                FormatDecimal(lineItem.Quantity),
+                FormatDecimal(lineItem.UnitPrice),
+                FormatDecimal(lineItem.Amount),
+                FormatDecimal(lineItem.Confidence)
+            };
+
+            builder.AppendLine(BuildCsvRow(values));
+        }
+
+        return builder.ToString();
+    }
+
     private static string ResolveExtension(string originalFileName, string contentType)
     {
         var extension = Path.GetExtension(originalFileName);
@@ -293,5 +432,56 @@ public class DocumentsController : ControllerBase
             "image/webp" => ".webp",
             _ => string.Empty
         };
+    }
+
+    private static string BuildCsvRow(IEnumerable<string> values)
+    {
+        return string.Join(",", values.Select(EscapeCsvValue));
+    }
+
+    private static string EscapeCsvValue(string? value)
+    {
+        var safeValue = value ?? string.Empty;
+        var escaped = safeValue.Replace("\"", "\"\"");
+        return $"\"{escaped}\"";
+    }
+
+    private static string FormatDecimal(decimal? value)
+    {
+        return value?.ToString("0.##", CultureInfo.InvariantCulture) ?? string.Empty;
+    }
+
+    private static string FormatDate(DateTime? value)
+    {
+        return value?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
+    }
+
+    private static byte[] BuildUtf8BomBytes(string content)
+    {
+        var utf8 = Encoding.UTF8;
+        var bom = utf8.GetPreamble();
+        var contentBytes = utf8.GetBytes(content);
+        var output = new byte[bom.Length + contentBytes.Length];
+        Buffer.BlockCopy(bom, 0, output, 0, bom.Length);
+        Buffer.BlockCopy(contentBytes, 0, output, bom.Length, contentBytes.Length);
+        return output;
+    }
+
+    private static string BuildExportFileName(string? originalFileName, Guid documentId, string suffixBase, string extension)
+    {
+        var baseName = Path.GetFileNameWithoutExtension(originalFileName);
+        if (string.IsNullOrWhiteSpace(baseName))
+        {
+            baseName = $"document-{documentId:N}";
+        }
+
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var sanitized = new string(baseName.Select(ch => invalidChars.Contains(ch) ? '_' : ch).ToArray()).Trim();
+        if (string.IsNullOrWhiteSpace(sanitized))
+        {
+            sanitized = $"document-{documentId:N}";
+        }
+
+        return $"{sanitized}-{suffixBase}.{extension}";
     }
 }
