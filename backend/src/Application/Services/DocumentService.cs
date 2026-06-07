@@ -12,6 +12,7 @@ public interface IDocumentService
     Task<IReadOnlyList<DocumentListItemDto>> GetRecentDocumentsAsync(CancellationToken cancellationToken = default);
     Task<DocumentDetailDto> GetDocumentAsync(Guid id, CancellationToken cancellationToken = default);
     Task<DocumentResultDto> GetDocumentResultAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<DocumentFileDto> GetDocumentFileAsync(Guid id, CancellationToken cancellationToken = default);
     Task<DocumentRawTextDto> GetDocumentRawTextAsync(Guid id, CancellationToken cancellationToken = default);
     Task<DocumentResultDto> UpdateExtractedFieldsAsync(Guid id, UpdateExtractedFieldsRequestDto requestDto, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ManualCorrectionDto>> GetCorrectionsAsync(Guid id, CancellationToken cancellationToken = default);
@@ -221,6 +222,28 @@ public class DocumentService : IDocumentService
             ProviderLatencyMs = latestExtractionJob?.FallbackUsed == true
                 ? latestExtractionJob.FallbackProviderLatencyMs ?? latestExtractionJob.PrimaryProviderLatencyMs
                 : latestExtractionJob?.PrimaryProviderLatencyMs
+        };
+    }
+
+    public async Task<DocumentFileDto> GetDocumentFileAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var document = await _dbContext.Documents
+            .AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == id, cancellationToken);
+
+        if (document == null)
+        {
+            throw new KeyNotFoundException($"Document with ID {id} not found");
+        }
+
+        return new DocumentFileDto
+        {
+            Id = document.Id,
+            OriginalFileName = document.OriginalFileName ?? string.Empty,
+            StoredFileName = document.StoredFileName ?? string.Empty,
+            StoragePath = document.StoragePath ?? string.Empty,
+            ContentType = string.IsNullOrWhiteSpace(document.ContentType) ? "application/octet-stream" : document.ContentType,
+            FileContent = document.FileContent
         };
     }
 

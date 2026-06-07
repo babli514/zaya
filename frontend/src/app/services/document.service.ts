@@ -138,6 +138,10 @@ export class DocumentService {
     return this.http.get<DocumentRawTextDto>(`${this.apiUrl}/${id}/raw-text`);
   }
 
+  getDocumentFileUrl(id: string): string {
+    return `${this.apiUrl}/${id}/file`;
+  }
+
   updateExtractedFields(id: string, request: UpdateExtractedFieldsRequestDto): Observable<DocumentResultDto> {
     return this.http.put<DocumentResultDto>(`${this.apiUrl}/${id}/extracted-fields`, request);
   }

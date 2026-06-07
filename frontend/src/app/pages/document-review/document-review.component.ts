@@ -1,6 +1,7 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, RouterModule } from '@angular/router';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { catchError, forkJoin, of } from 'rxjs';
 import {
@@ -44,7 +45,26 @@ type ReviewFormGroup = FormGroup<{
       </div>
 
       <div *ngIf="!loading && result" class="review-section">
-        <div class="header">
+        <div class="review-layout">
+          <aside class="preview-panel">
+            <h3>Document preview</h3>
+            <div class="preview-frame" *ngIf="isPdfPreview">
+              <iframe [src]="safePreviewUrl" title="Document preview" (error)="onPreviewError()"></iframe>
+            </div>
+            <div class="preview-frame" *ngIf="isImagePreview">
+              <img [src]="previewUrl" [alt]="result.document.originalFileName" (error)="onPreviewError()" />
+            </div>
+            <div class="preview-fallback" *ngIf="previewFailed || (!isPdfPreview && !isImagePreview)">
+              <p>Preview is not available for this file type.</p>
+              <div class="preview-actions">
+                <a [href]="previewUrl" class="btn btn-outline" target="_blank" rel="noopener">Open file</a>
+                <a [href]="previewUrl" class="btn btn-outline" download>Download file</a>
+              </div>
+            </div>
+          </aside>
+
+          <div class="review-content">
+            <div class="header">
           <div>
             <h1>Review {{ result.document.originalFileName }}</h1>
             <p class="meta">Document ID: {{ result.document.id }}</p>
@@ -180,6 +200,7 @@ type ReviewFormGroup = FormGroup<{
           <a [href]="jsonExportUrl" class="btn btn-outline" download>Download JSON</a>
           <a [href]="csvExportUrl" class="btn btn-outline" download>Download CSV</a>
         </div>
+          </div>
       </div>
     </div>
   `,
@@ -206,6 +227,54 @@ type ReviewFormGroup = FormGroup<{
       padding: 26px;
       box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
       border: 1px solid #eaecf0;
+    }
+
+    .review-layout {
+      display: grid;
+      grid-template-columns: minmax(280px, 34%) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .preview-panel {
+      border: 1px solid #eaecf0;
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+      position: sticky;
+      top: 16px;
+    }
+
+    .preview-frame {
+      border: 1px solid #e4e7ec;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #f8fafc;
+      min-height: 520px;
+    }
+
+    .preview-frame iframe,
+    .preview-frame img {
+      width: 100%;
+      height: 100%;
+      min-height: 520px;
+      border: 0;
+      display: block;
+      object-fit: contain;
+      background: #fff;
+    }
+
+    .preview-fallback {
+      border: 1px dashed #d0d5dd;
+      border-radius: 8px;
+      padding: 12px;
+      background: #f9fafb;
+    }
+
+    .preview-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
     }
 
     .header {
@@ -393,10 +462,6 @@ type ReviewFormGroup = FormGroup<{
       margin-bottom: 8px;
     }
 
-    .warning-item:last-child {
-      margin-bottom: 0;
-    }
-
     .warning-meta {
       display: flex;
       gap: 8px;
@@ -412,12 +477,6 @@ type ReviewFormGroup = FormGroup<{
       font-weight: 700;
       background: #f3f4f6;
       color: #111827;
-    }
-
-    .warning-field {
-      margin: 4px 0 0;
-      font-size: 12px;
-      color: #6b7280;
     }
 
     .warning-critical {
@@ -462,6 +521,16 @@ type ReviewFormGroup = FormGroup<{
     }
 
     @media (max-width: 900px) {
+      .review-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .preview-frame,
+      .preview-frame iframe,
+      .preview-frame img {
+        min-height: 320px;
+      }
+
       .header {
         flex-direction: column;
         align-items: flex-start;
@@ -487,13 +556,19 @@ export class DocumentReviewComponent implements OnInit {
   rawPanelExpanded = false;
   jsonExportUrl = '';
   csvExportUrl = '';
+  previewUrl = '';
+  safePreviewUrl: SafeResourceUrl | null = null;
+  isPdfPreview = false;
+  isImagePreview = false;
+  previewFailed = false;
 
   readonly form: ReviewFormGroup;
 
   constructor(
     private readonly documentService: DocumentService,
     private readonly route: ActivatedRoute,
-    private readonly fb: FormBuilder
+    private readonly fb: FormBuilder,
+    private readonly sanitizer: DomSanitizer
   ) {
     this.form = this.fb.group({
       vendorName: this.fb.nonNullable.control('', [Validators.required]),
@@ -527,6 +602,11 @@ export class DocumentReviewComponent implements OnInit {
     this.loadError = '';
     this.saveError = '';
     this.saveSuccess = '';
+    this.previewUrl = '';
+    this.safePreviewUrl = null;
+    this.isPdfPreview = false;
+    this.isImagePreview = false;
+    this.previewFailed = false;
 
     forkJoin({
       result: this.documentService.getDocumentResult(id),
@@ -537,6 +617,12 @@ export class DocumentReviewComponent implements OnInit {
         this.result = result;
         this.jsonExportUrl = this.documentService.getJsonExportUrl(result.document.id);
         this.csvExportUrl = this.documentService.getCsvExportUrl(result.document.id);
+        this.previewUrl = this.documentService.getDocumentFileUrl(result.document.id);
+        this.safePreviewUrl = this.sanitizer.bypassSecurityTrustResourceUrl(this.previewUrl);
+        const contentType = (result.document.contentType || '').toLowerCase();
+        this.isPdfPreview = contentType.includes('application/pdf');
+        this.isImagePreview = contentType.startsWith('image/');
+        this.previewFailed = false;
         this.patchFormFromResult(result);
         this.loading = false;
       },
@@ -608,6 +694,10 @@ export class DocumentReviewComponent implements OnInit {
     }
 
     return 'warning-info';
+  }
+
+  onPreviewError(): void {
+    this.previewFailed = true;
   }
 
   private patchFormFromResult(result: DocumentResultDto): void {

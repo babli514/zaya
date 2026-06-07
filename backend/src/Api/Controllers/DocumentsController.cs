@@ -98,6 +98,60 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    [HttpGet("{id:guid}/file")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetDocumentFile(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var fileDto = await _documentService.GetDocumentFileAsync(id, cancellationToken);
+            var safeDownloadName = string.IsNullOrWhiteSpace(fileDto.OriginalFileName)
+                ? $"document-{id:N}"
+                : Path.GetFileName(fileDto.OriginalFileName);
+
+            if (fileDto.FileContent is { Length: > 0 })
+            {
+                return File(fileDto.FileContent, fileDto.ContentType, safeDownloadName, enableRangeProcessing: true);
+            }
+
+            if (string.IsNullOrWhiteSpace(fileDto.StoragePath))
+            {
+                return NotFound();
+            }
+
+            var configuredRoot = string.IsNullOrWhiteSpace(_uploadOptions.RootFolder) ? Path.Combine("App_Data", "uploads") : _uploadOptions.RootFolder;
+            var storageRoot = Path.IsPathRooted(configuredRoot)
+                ? Path.GetFullPath(configuredRoot)
+                : Path.GetFullPath(Path.Combine(_environment.ContentRootPath, configuredRoot));
+
+            var relativeStoragePath = fileDto.StoragePath.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+            var relativePathFromRoot = Path.GetFileName(relativeStoragePath);
+            if (string.IsNullOrWhiteSpace(relativePathFromRoot) || !string.Equals(relativePathFromRoot, fileDto.StoredFileName, StringComparison.Ordinal))
+            {
+                return NotFound();
+            }
+
+            var physicalPath = Path.GetFullPath(Path.Combine(storageRoot, relativePathFromRoot));
+            if (!physicalPath.StartsWith(storageRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(physicalPath, storageRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return NotFound();
+            }
+
+            if (!System.IO.File.Exists(physicalPath))
+            {
+                return NotFound();
+            }
+
+            return PhysicalFile(physicalPath, fileDto.ContentType, safeDownloadName, enableRangeProcessing: true);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
     [HttpPost("upload")]
     [ProducesResponseType(typeof(UploadDocumentResponseDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

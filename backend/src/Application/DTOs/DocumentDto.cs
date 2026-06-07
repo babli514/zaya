@@ -24,6 +24,16 @@ public class UploadDocumentResponseDto
     public DateTime UploadedAtUtc { get; set; }
 }
 
+public class DocumentFileDto
+{
+    public Guid Id { get; set; }
+    public string OriginalFileName { get; set; } = string.Empty;
+    public string StoredFileName { get; set; } = string.Empty;
+    public string StoragePath { get; set; } = string.Empty;
+    public string ContentType { get; set; } = "application/octet-stream";
+    public byte[]? FileContent { get; set; }
+}
+
 public class DocumentListItemDto
 {
     public Guid Id { get; set; }

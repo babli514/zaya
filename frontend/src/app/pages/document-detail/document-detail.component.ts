@@ -1,6 +1,7 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, RouterModule } from '@angular/router';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { catchError, forkJoin, of } from 'rxjs';
 import { DocumentDetailDto, DocumentResultDto, DocumentService, ValidationWarningDto } from '../../services/document.service';
 
@@ -20,7 +21,26 @@ type UiLanguage = 'en' | 'fr';
       </div>
 
       <div *ngIf="!loading && document" class="detail-section">
-        <div class="header">
+        <div class="detail-layout">
+          <aside class="preview-panel">
+            <h3>Document preview</h3>
+            <div class="preview-frame" *ngIf="isPdfPreview">
+              <iframe [src]="safePreviewUrl" title="Document preview" (error)="onPreviewError()"></iframe>
+            </div>
+            <div class="preview-frame" *ngIf="isImagePreview">
+              <img [src]="previewUrl" [alt]="document.originalFileName" (error)="onPreviewError()" />
+            </div>
+            <div class="preview-fallback" *ngIf="previewFailed || (!isPdfPreview && !isImagePreview)">
+              <p>Preview is not available for this file type.</p>
+              <div class="preview-actions">
+                <a [href]="previewUrl" class="btn btn-outline" target="_blank" rel="noopener">Open file</a>
+                <a [href]="previewUrl" class="btn btn-outline" download>Download file</a>
+              </div>
+            </div>
+          </aside>
+
+          <div class="main-content">
+            <div class="header">
           <div>
             <h1>{{ document.originalFileName }}</h1>
             <p class="subtitle">Document ID: {{ document.id }}</p>
@@ -153,6 +173,7 @@ type UiLanguage = 'en' | 'fr';
             <p *ngIf="warning.fieldName" class="warning-field">Field: {{ warning.fieldName }}</p>
           </div>
         </div>
+        </div>
       </div>
     </div>
   `,
@@ -179,6 +200,53 @@ type UiLanguage = 'en' | 'fr';
       padding: 28px;
       box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
       border: 1px solid #eaecf0;
+    }
+
+    .detail-layout {
+      display: grid;
+      grid-template-columns: minmax(280px, 34%) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .preview-panel {
+      border: 1px solid #eaecf0;
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+      position: sticky;
+      top: 16px;
+    }
+
+    .preview-frame {
+      border: 1px solid #e4e7ec;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #f8fafc;
+      min-height: 420px;
+    }
+
+    .preview-frame iframe,
+    .preview-frame img {
+      width: 100%;
+      height: 100%;
+      min-height: 420px;
+      border: 0;
+      display: block;
+      object-fit: contain;
+    }
+
+    .preview-fallback {
+      border: 1px dashed #d0d5dd;
+      border-radius: 8px;
+      padding: 12px;
+      background: #f9fafb;
+    }
+
+    .preview-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
     }
 
     .header {
@@ -402,10 +470,6 @@ type UiLanguage = 'en' | 'fr';
       margin-bottom: 10px;
     }
 
-    .warning-item:last-child {
-      margin-bottom: 0;
-    }
-
     .warning-meta {
       display: flex;
       gap: 8px;
@@ -421,12 +485,6 @@ type UiLanguage = 'en' | 'fr';
       font-weight: 700;
       background: #f3f4f6;
       color: #111827;
-    }
-
-    .warning-field {
-      margin: 4px 0 0;
-      font-size: 12px;
-      color: #6b7280;
     }
 
     .warning-critical {
@@ -445,6 +503,10 @@ type UiLanguage = 'en' | 'fr';
     }
 
     @media (max-width: 900px) {
+      .detail-layout {
+        grid-template-columns: 1fr;
+      }
+
       .header {
         flex-direction: column;
         align-items: flex-start;
@@ -466,10 +528,16 @@ export class DocumentDetailComponent implements OnInit {
   jsonExportUrl = '';
   csvExportUrl = '';
   engineBadges: string[] = [];
+  previewUrl = '';
+  safePreviewUrl: SafeResourceUrl | null = null;
+  isPdfPreview = false;
+  isImagePreview = false;
+  previewFailed = false;
 
   constructor(
     private readonly documentService: DocumentService,
-    private readonly route: ActivatedRoute
+    private readonly route: ActivatedRoute,
+    private readonly sanitizer: DomSanitizer
   ) {}
 
   get isUploaded(): boolean {
@@ -503,6 +571,11 @@ export class DocumentDetailComponent implements OnInit {
     this.actionError = '';
     this.rawTextVisible = false;
     this.rawText = '';
+    this.previewUrl = '';
+    this.safePreviewUrl = null;
+    this.isPdfPreview = false;
+    this.isImagePreview = false;
+    this.previewFailed = false;
 
     forkJoin({
       document: this.documentService.getDocument(id),
@@ -513,6 +586,12 @@ export class DocumentDetailComponent implements OnInit {
         this.result = result;
         this.jsonExportUrl = this.documentService.getJsonExportUrl(document.id);
         this.csvExportUrl = this.documentService.getCsvExportUrl(document.id);
+        this.previewUrl = this.documentService.getDocumentFileUrl(document.id);
+        this.safePreviewUrl = this.sanitizer.bypassSecurityTrustResourceUrl(this.previewUrl);
+        const contentType = (document.contentType || '').toLowerCase();
+        this.isPdfPreview = contentType.includes('application/pdf');
+        this.isImagePreview = contentType.startsWith('image/');
+        this.previewFailed = false;
         this.engineBadges = this.buildEngineBadges(result);
         this.loading = false;
       },
@@ -572,6 +651,10 @@ export class DocumentDetailComponent implements OnInit {
         this.rawText = this.getErrorMessage(err);
       }
     });
+  }
+
+  onPreviewError(): void {
+    this.previewFailed = true;
   }
 
   getRequestedLanguageLabel(value: string): string {
