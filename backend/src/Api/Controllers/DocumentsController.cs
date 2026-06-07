@@ -63,6 +63,38 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    [HttpGet("{id:guid}/result")]
+    [ProducesResponseType(typeof(DocumentResultDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<DocumentResultDto>> GetDocumentResult(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await _documentService.GetDocumentResultAsync(id, cancellationToken);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    [HttpGet("{id:guid}/raw-text")]
+    [ProducesResponseType(typeof(DocumentRawTextDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<DocumentRawTextDto>> GetDocumentRawText(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await _documentService.GetDocumentRawTextAsync(id, cancellationToken);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
     [HttpPost("upload")]
     [ProducesResponseType(typeof(UploadDocumentResponseDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

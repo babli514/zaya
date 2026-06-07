@@ -36,11 +36,15 @@ public class ExtractionJobConfiguration : IEntityTypeConfiguration<ExtractionJob
         builder.Property(e => e.PrimaryModelName)
             .HasMaxLength(200);
 
+        builder.Property(e => e.PrimaryProviderLatencyMs);
+
         builder.Property(e => e.FallbackProviderName)
             .HasMaxLength(200);
 
         builder.Property(e => e.FallbackModelName)
             .HasMaxLength(200);
+
+        builder.Property(e => e.FallbackProviderLatencyMs);
 
         builder.Property(e => e.WarningsJson)
             .HasColumnType("nvarchar(max)");
@@ -52,6 +56,10 @@ public class ExtractionJobConfiguration : IEntityTypeConfiguration<ExtractionJob
             .HasColumnType("decimal(5,4)");
 
         builder.Property(e => e.DetectedLanguage)
+            .HasConversion<string>()
+            .IsRequired();
+
+        builder.Property(e => e.RequestedDocumentLanguage)
             .HasConversion<string>()
             .IsRequired();
 

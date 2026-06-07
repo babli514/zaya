@@ -87,7 +87,8 @@ public class DocumentProcessingService : IDocumentProcessingService
             Id = Guid.NewGuid(),
             DocumentId = document.Id,
             StartedAtUtc = DateTime.UtcNow,
-            Status = ExtractionJobStatus.Running
+            Status = ExtractionJobStatus.Running,
+            RequestedDocumentLanguage = document.DocumentLanguage
         };
         _dbContext.ExtractionJobs.Add(extractionJob);
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -121,6 +122,7 @@ public class DocumentProcessingService : IDocumentProcessingService
             extractionJob.PrimaryOcrEngine = primaryOcrResult.OcrEngineType;
             extractionJob.PrimaryProviderName = primaryOcrResult.ProviderName;
             extractionJob.PrimaryModelName = primaryOcrResult.ModelName;
+            extractionJob.PrimaryProviderLatencyMs = primaryOcrResult.ProviderLatencyMs;
 
             var processing = await RunExtractionAndValidationAsync(document, primaryOcrResult, cancellationToken);
 
@@ -138,31 +140,58 @@ public class DocumentProcessingService : IDocumentProcessingService
             extractionJob.Status = ExtractionJobStatus.Completed;
             extractionJob.CompletedAtUtc = DateTime.UtcNow;
 
-            var extractedFinancialDocument = new ExtractedFinancialDocument
-            {
-                Id = Guid.NewGuid(),
-                DocumentId = document.Id,
-                ExtractionJobId = extractionJob.Id,
-                VendorName = string.IsNullOrWhiteSpace(processing.ExtractionResult.VendorName) ? "Unknown" : processing.ExtractionResult.VendorName,
-                CustomerName = processing.ExtractionResult.CustomerName,
-                DocumentNumber = processing.ExtractionResult.DocumentNumber,
-                DocumentDate = processing.ExtractionResult.DocumentDate,
-                DueDate = processing.ExtractionResult.DueDate,
-                Currency = processing.ExtractionResult.Currency,
-                Subtotal = processing.ExtractionResult.Subtotal,
-                Gst = processing.ExtractionResult.Gst,
-                Qst = processing.ExtractionResult.Qst,
-                Hst = processing.ExtractionResult.Hst,
-                Pst = processing.ExtractionResult.Pst,
-                Tip = processing.ExtractionResult.Tip,
-                Total = processing.ExtractionResult.Total,
-                Confidence = finalConfidence,
-                DetectedLanguage = processing.DetectedLanguage,
-                IsValidated = processing.ValidationResult.IsValid,
-                ValidationSummary = processing.ValidationResult.ValidationSummary
-            };
+            var extractedFinancialDocument = await _dbContext.ExtractedFinancialDocuments
+                .Include(e => e.LineItems)
+                .FirstOrDefaultAsync(e => e.ExtractionJobId == extractionJob.Id, cancellationToken);
 
-            _dbContext.ExtractedFinancialDocuments.Add(extractedFinancialDocument);
+            if (extractedFinancialDocument == null)
+            {
+                extractedFinancialDocument = new ExtractedFinancialDocument
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentId = document.Id,
+                    ExtractionJobId = extractionJob.Id,
+                    VendorName = "Unknown"
+                };
+                _dbContext.ExtractedFinancialDocuments.Add(extractedFinancialDocument);
+            }
+
+            extractedFinancialDocument.VendorName = string.IsNullOrWhiteSpace(processing.ExtractionResult.VendorName) ? "Unknown" : processing.ExtractionResult.VendorName;
+            extractedFinancialDocument.CustomerName = processing.ExtractionResult.CustomerName;
+            extractedFinancialDocument.DocumentNumber = processing.ExtractionResult.DocumentNumber;
+            extractedFinancialDocument.DocumentDate = processing.ExtractionResult.DocumentDate;
+            extractedFinancialDocument.DueDate = processing.ExtractionResult.DueDate;
+            extractedFinancialDocument.Currency = processing.ExtractionResult.Currency;
+            extractedFinancialDocument.Subtotal = processing.ExtractionResult.Subtotal;
+            extractedFinancialDocument.Gst = processing.ExtractionResult.Gst;
+            extractedFinancialDocument.Qst = processing.ExtractionResult.Qst;
+            extractedFinancialDocument.Hst = processing.ExtractionResult.Hst;
+            extractedFinancialDocument.Pst = processing.ExtractionResult.Pst;
+            extractedFinancialDocument.Tip = processing.ExtractionResult.Tip;
+            extractedFinancialDocument.Total = processing.ExtractionResult.Total;
+            extractedFinancialDocument.Confidence = finalConfidence;
+            extractedFinancialDocument.DetectedLanguage = processing.DetectedLanguage;
+            extractedFinancialDocument.IsValidated = processing.ValidationResult.IsValid;
+            extractedFinancialDocument.ValidationSummary = processing.ValidationResult.ValidationSummary;
+
+            if (extractedFinancialDocument.LineItems.Count > 0)
+            {
+                _dbContext.ExtractedLineItems.RemoveRange(extractedFinancialDocument.LineItems);
+                extractedFinancialDocument.LineItems.Clear();
+            }
+
+            foreach (var lineItem in processing.ExtractionResult.LineItems)
+            {
+                extractedFinancialDocument.LineItems.Add(new ExtractedLineItem
+                {
+                    Id = Guid.NewGuid(),
+                    Description = lineItem.Description,
+                    Quantity = lineItem.Quantity,
+                    UnitPrice = lineItem.UnitPrice,
+                    Amount = lineItem.Amount,
+                    Confidence = null
+                });
+            }
 
             document.DocumentLanguage = processing.DetectedLanguage;
             var hasValidationIssues = processing.ValidationResult.Warnings.Any(w => w.Severity != ValidationSeverity.Info);
@@ -284,6 +313,7 @@ public class DocumentProcessingService : IDocumentProcessingService
             extractionJob.FallbackOcrEngine = fallbackOcrResult.OcrEngineType;
             extractionJob.FallbackProviderName = fallbackOcrResult.ProviderName;
             extractionJob.FallbackModelName = fallbackOcrResult.ModelName;
+            extractionJob.FallbackProviderLatencyMs = fallbackOcrResult.ProviderLatencyMs;
 
             if (fallbackAttempt.ValidationResult.IsValid || !primaryAttempt.ValidationResult.IsValid)
             {
