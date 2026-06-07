@@ -2,6 +2,8 @@ using FinancialOCR.Api.Options;
 using FinancialOCR.Application.DTOs;
 using FinancialOCR.Application.Services;
 using FinancialOCR.Domain.Entities;
+using FinancialOCR.Infrastructure.Persistence;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
 using System.Net;
@@ -13,6 +15,7 @@ namespace FinancialOCR.Api.Services;
 
 public class GeminiFlashLiteOcrProvider : IOcrProvider
 {
+    private sealed record GeminiUsageMetadata(int? InputTokenCount, int? OutputTokenCount, long? OutputBytes);
     private const string PlaceholderModel = "CONFIGURE_ACTUAL_MODEL_ID_HERE";
     private const string DefaultEndpoint = "https://generativelanguage.googleapis.com/v1beta/models";
     private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -25,10 +28,12 @@ public class GeminiFlashLiteOcrProvider : IOcrProvider
     };
 
     private readonly OcrOptions _ocrOptions;
+    private readonly IProviderUsageTracker _providerUsageTracker;
 
-    public GeminiFlashLiteOcrProvider(IOptions<OcrOptions> ocrOptions)
+    public GeminiFlashLiteOcrProvider(IOptions<OcrOptions> ocrOptions, IProviderUsageTracker? providerUsageTracker = null)
     {
         _ocrOptions = ocrOptions.Value;
+        _providerUsageTracker = providerUsageTracker ?? new NullProviderUsageTracker();
     }
 
     public OcrEngineType EngineType => OcrEngineType.GeminiFlashLite;
@@ -60,43 +65,81 @@ public class GeminiFlashLiteOcrProvider : IOcrProvider
 
         var providerName = string.IsNullOrWhiteSpace(settings.ProviderName) ? "GoogleGemini" : settings.ProviderName;
         var warnings = new List<string>();
+        var startedAtUtc = DateTime.UtcNow;
         var stopwatch = Stopwatch.StartNew();
-        var mimeType = ResolveMimeType(request);
-        var fileBytes = await File.ReadAllBytesAsync(request.FilePath, cancellationToken);
-        var base64 = Convert.ToBase64String(fileBytes);
-        var prompt = BuildPrompt(request.RequestedDocumentLanguage, request.DetectedLanguage);
+        var usageRecord = await _providerUsageTracker.StartAsync(request.DocumentId, request.ExtractionJobId, providerName, settings.Model, ProviderOperationType.Ocr, startedAtUtc, cancellationToken);
+        byte[]? fileBytes = null;
 
-        var endpoint = BuildEndpoint(settings.Endpoint, settings.Model);
-        var maxRetries = Math.Max(0, settings.MaxRetries);
-        var timeoutSeconds = settings.TimeoutSeconds <= 0 ? 60 : settings.TimeoutSeconds;
-
-        var responseText = await ExecuteWithRetryAsync(endpoint, settings.ApiKey, timeoutSeconds, maxRetries, prompt, mimeType, base64, cancellationToken);
-
-        stopwatch.Stop();
-
-        if (string.IsNullOrWhiteSpace(responseText))
+        try
         {
-            warnings.Add("Gemini returned empty OCR text.");
-            responseText = "[unreadable]";
+            var mimeType = ResolveMimeType(request);
+            fileBytes = await File.ReadAllBytesAsync(request.FilePath, cancellationToken);
+            var base64 = Convert.ToBase64String(fileBytes);
+            var prompt = BuildPrompt(request.RequestedDocumentLanguage, request.DetectedLanguage);
+
+            var endpoint = BuildEndpoint(settings.Endpoint, settings.Model);
+            var maxRetries = Math.Max(0, settings.MaxRetries);
+            var timeoutSeconds = settings.TimeoutSeconds <= 0 ? 60 : settings.TimeoutSeconds;
+
+            var response = await ExecuteWithRetryAsync(endpoint, settings.ApiKey, timeoutSeconds, maxRetries, prompt, mimeType, base64, cancellationToken);
+            var responseText = response.ResponseText;
+
+            stopwatch.Stop();
+
+            if (string.IsNullOrWhiteSpace(responseText))
+            {
+                warnings.Add("Gemini returned empty OCR text.");
+                responseText = "[unreadable]";
+            }
+
+            var estimatedCostUsd = _providerUsageTracker.EstimateCostUsd(settings.Model, response.UsageMetadata.InputTokenCount, response.UsageMetadata.OutputTokenCount);
+            await _providerUsageTracker.CompleteSuccessAsync(
+                usageRecord,
+                DateTime.UtcNow,
+                stopwatch.ElapsedMilliseconds,
+                response.UsageMetadata.InputTokenCount,
+                response.UsageMetadata.OutputTokenCount,
+                fileBytes.LongLength,
+                response.UsageMetadata.OutputBytes,
+                estimatedCostUsd,
+                cancellationToken);
+
+            var confidence = EstimateConfidence(responseText);
+
+            return new OcrResult
+            {
+                ExtractionJobId = request.ExtractionJobId,
+                RawText = responseText,
+                PageCount = null,
+                Warnings = warnings,
+                RequestedDocumentLanguage = request.RequestedDocumentLanguage,
+                DetectedLanguage = request.DetectedLanguage,
+                PreferredVisionProvider = request.PreferredVisionProvider,
+                OcrEngineType = EngineType,
+                ProviderName = providerName,
+                ModelName = settings.Model,
+                ProviderLatencyMs = stopwatch.ElapsedMilliseconds,
+                ProviderCostEstimate = estimatedCostUsd,
+                Confidence = confidence
+            };
         }
-
-        var confidence = EstimateConfidence(responseText);
-
-        return new OcrResult
+        catch (Exception ex)
         {
-            RawText = responseText,
-            PageCount = null,
-            Warnings = warnings,
-            RequestedDocumentLanguage = request.RequestedDocumentLanguage,
-            DetectedLanguage = request.DetectedLanguage,
-            PreferredVisionProvider = request.PreferredVisionProvider,
-            OcrEngineType = EngineType,
-            ProviderName = providerName,
-            ModelName = settings.Model,
-            ProviderLatencyMs = stopwatch.ElapsedMilliseconds,
-            ProviderCostEstimate = null,
-            Confidence = confidence
-        };
+            stopwatch.Stop();
+            await _providerUsageTracker.CompleteFailureAsync(
+                usageRecord,
+                DateTime.UtcNow,
+                stopwatch.ElapsedMilliseconds,
+                ResolveErrorCode(ex),
+                ex.Message,
+                null,
+                null,
+                fileBytes?.LongLength,
+                null,
+                null,
+                cancellationToken);
+            throw;
+        }
     }
 
     private static bool IsSupportedFile(OcrRequest request)
@@ -223,7 +266,7 @@ Instructions:
                statusCode == HttpStatusCode.GatewayTimeout;
     }
 
-    private static async Task<string> ExecuteWithRetryAsync(Uri endpoint, string apiKey, int timeoutSeconds, int maxRetries, string prompt, string mimeType, string base64Data, CancellationToken cancellationToken)
+    private static async Task<(string ResponseText, GeminiUsageMetadata UsageMetadata)> ExecuteWithRetryAsync(Uri endpoint, string apiKey, int timeoutSeconds, int maxRetries, string prompt, string mimeType, string base64Data, CancellationToken cancellationToken)
     {
         using var httpClient = new HttpClient
         {
@@ -294,7 +337,8 @@ Instructions:
                 }
 
                 var text = ExtractPlainText(responseBody);
-                return text;
+                var usageMetadata = ExtractUsageMetadata(responseBody);
+                return (text, usageMetadata);
             }
             catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
             {
@@ -358,5 +402,68 @@ Instructions:
         }
 
         return string.Empty;
+    }
+
+    private static GeminiUsageMetadata ExtractUsageMetadata(string responseBody)
+    {
+        using var json = JsonDocument.Parse(responseBody);
+
+        if (!json.RootElement.TryGetProperty("usageMetadata", out var usageMetadataElement))
+        {
+            return new GeminiUsageMetadata(null, null, null);
+        }
+
+        int? inputTokenCount = null;
+        int? outputTokenCount = null;
+
+        if (usageMetadataElement.TryGetProperty("promptTokenCount", out var promptTokenCountElement)
+            && promptTokenCountElement.ValueKind == JsonValueKind.Number
+            && promptTokenCountElement.TryGetInt32(out var promptTokenCount))
+        {
+            inputTokenCount = promptTokenCount;
+        }
+
+        if (usageMetadataElement.TryGetProperty("candidatesTokenCount", out var candidatesTokenCountElement)
+            && candidatesTokenCountElement.ValueKind == JsonValueKind.Number
+            && candidatesTokenCountElement.TryGetInt32(out var candidatesTokenCount))
+        {
+            outputTokenCount = candidatesTokenCount;
+        }
+
+        if (!outputTokenCount.HasValue
+            && usageMetadataElement.TryGetProperty("totalTokenCount", out var totalTokenCountElement)
+            && totalTokenCountElement.ValueKind == JsonValueKind.Number
+            && totalTokenCountElement.TryGetInt32(out var totalTokenCount)
+            && inputTokenCount.HasValue)
+        {
+            outputTokenCount = Math.Max(0, totalTokenCount - inputTokenCount.Value);
+        }
+
+        long? outputBytes = null;
+        if (json.RootElement.TryGetProperty("candidates", out var candidates)
+            && candidates.ValueKind == JsonValueKind.Array
+            && candidates.GetArrayLength() > 0)
+        {
+            var firstCandidateRaw = candidates[0].GetRawText();
+            outputBytes = Encoding.UTF8.GetByteCount(firstCandidateRaw);
+        }
+
+        return new GeminiUsageMetadata(inputTokenCount, outputTokenCount, outputBytes);
+    }
+
+    private static string ResolveErrorCode(Exception exception)
+    {
+        return exception switch
+        {
+            TaskCanceledException => "Timeout",
+            OperationCanceledException => "Canceled",
+            TimeoutException => "Timeout",
+            HttpRequestException => "HttpRequest",
+            JsonException => "InvalidResponseFormat",
+            InvalidOperationException => "InvalidOperation",
+            FileNotFoundException => "FileNotFound",
+            NotSupportedException => "NotSupported",
+            _ => "UnhandledException"
+        };
     }
 }

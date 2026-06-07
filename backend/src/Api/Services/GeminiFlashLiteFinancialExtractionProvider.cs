@@ -3,6 +3,7 @@ using FinancialOCR.Application.DTOs;
 using FinancialOCR.Application.Services;
 using FinancialOCR.Domain.Entities;
 using Microsoft.Extensions.Options;
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
@@ -13,14 +14,17 @@ namespace FinancialOCR.Api.Services;
 
 public class GeminiFlashLiteFinancialExtractionProvider : IStructuredFinancialExtractionProvider
 {
+    protected sealed record GeminiUsageMetadata(int? InputTokenCount, int? OutputTokenCount, long? OutputBytes);
     private const string PlaceholderModel = "CONFIGURE_ACTUAL_MODEL_ID_HERE";
     private const string DefaultEndpoint = "https://generativelanguage.googleapis.com/v1beta/models";
     private readonly FinancialExtractionOptions _options;
     private readonly IFinancialDocumentValidator _validator;
+    private readonly IProviderUsageTracker _providerUsageTracker;
 
-    public GeminiFlashLiteFinancialExtractionProvider(IOptions<FinancialExtractionOptions> options, IFinancialDocumentValidator? validator = null)
+    public GeminiFlashLiteFinancialExtractionProvider(IOptions<FinancialExtractionOptions> options, IProviderUsageTracker? providerUsageTracker = null, IFinancialDocumentValidator? validator = null)
     {
         _options = options.Value;
+        _providerUsageTracker = providerUsageTracker ?? new NullProviderUsageTracker();
         _validator = validator ?? new FinancialDocumentValidator();
     }
 
@@ -47,36 +51,80 @@ public class GeminiFlashLiteFinancialExtractionProvider : IStructuredFinancialEx
         var prompt = BuildStructuredPrompt(input.RequestedDocumentLanguage, input.DetectedLanguage, input.DocumentType, input.RawText);
         var timeoutSeconds = settings.TimeoutSeconds <= 0 ? 60 : settings.TimeoutSeconds;
         var maxRetries = Math.Max(0, settings.MaxRetries);
-
         var requestPayload = BuildRequestPayload(prompt);
-        var responseBody = await SendGeminiRequestAsync(endpoint, settings.ApiKey, requestPayload, timeoutSeconds, maxRetries, cancellationToken);
-        var jsonText = ExtractResponseText(responseBody);
-        if (string.IsNullOrWhiteSpace(jsonText))
-        {
-            throw new InvalidOperationException("Gemini structured extraction returned empty JSON content.");
-        }
+        var startedAtUtc = DateTime.UtcNow;
+        var stopwatch = Stopwatch.StartNew();
+        var providerName = ProviderName;
+        var usageRecord = await _providerUsageTracker.StartAsync(input.DocumentId, input.ExtractionJobId, providerName, settings.Model, ProviderOperationType.StructuredExtraction, startedAtUtc, cancellationToken);
 
-        GeminiStructuredJsonResponse parsed;
         try
         {
-            parsed = ParseStrictJson(jsonText);
-        }
-        catch (JsonException ex)
-        {
-            throw new InvalidOperationException("Gemini structured extraction returned invalid JSON.", ex);
-        }
+            var response = await SendGeminiRequestAsync(endpoint, settings.ApiKey, requestPayload, timeoutSeconds, maxRetries, cancellationToken);
+            var responseBody = response.ResponseBody;
+            var jsonText = ExtractResponseText(responseBody);
+            if (string.IsNullOrWhiteSpace(jsonText))
+            {
+                throw new InvalidOperationException("Gemini structured extraction returned empty JSON content.");
+            }
 
-        var normalized = NormalizeParsedResult(parsed, input);
-        var validation = _validator.Validate(normalized, input.DocumentType);
-        if (!validation.IsValid)
-        {
-            throw new InvalidOperationException($"Gemini structured extraction did not pass validation: {validation.ValidationSummary}");
-        }
+            GeminiStructuredJsonResponse parsed;
+            try
+            {
+                parsed = ParseStrictJson(jsonText);
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException("Gemini structured extraction returned invalid JSON.", ex);
+            }
 
-        return normalized;
+            var normalized = NormalizeParsedResult(parsed, input);
+            var validation = _validator.Validate(normalized, input.DocumentType);
+            if (!validation.IsValid)
+            {
+                throw new InvalidOperationException($"Gemini structured extraction did not pass validation: {validation.ValidationSummary}");
+            }
+
+            stopwatch.Stop();
+            var inputBytes = Encoding.UTF8.GetByteCount(input.RawText);
+            var estimatedCostUsd = _providerUsageTracker.EstimateCostUsd(settings.Model, response.UsageMetadata.InputTokenCount, response.UsageMetadata.OutputTokenCount);
+            await _providerUsageTracker.CompleteSuccessAsync(
+                usageRecord,
+                DateTime.UtcNow,
+                stopwatch.ElapsedMilliseconds,
+                response.UsageMetadata.InputTokenCount,
+                response.UsageMetadata.OutputTokenCount,
+                inputBytes,
+                response.UsageMetadata.OutputBytes,
+                estimatedCostUsd,
+                cancellationToken);
+
+            normalized.ProviderName = providerName;
+            normalized.ModelName = settings.Model;
+            normalized.ProviderLatencyMs = stopwatch.ElapsedMilliseconds;
+            normalized.ProviderCostEstimate = estimatedCostUsd;
+
+            return normalized;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _providerUsageTracker.CompleteFailureAsync(
+                usageRecord,
+                DateTime.UtcNow,
+                stopwatch.ElapsedMilliseconds,
+                ResolveErrorCode(ex),
+                ex.Message,
+                null,
+                null,
+                Encoding.UTF8.GetByteCount(input.RawText),
+                null,
+                null,
+                cancellationToken);
+            throw;
+        }
     }
 
-    protected virtual async Task<string> SendGeminiRequestAsync(Uri endpoint, string apiKey, string requestJson, int timeoutSeconds, int maxRetries, CancellationToken cancellationToken)
+    protected virtual async Task<(string ResponseBody, GeminiUsageMetadata UsageMetadata)> SendGeminiRequestAsync(Uri endpoint, string apiKey, string requestJson, int timeoutSeconds, int maxRetries, CancellationToken cancellationToken)
     {
         using var httpClient = new HttpClient
         {
@@ -116,7 +164,7 @@ public class GeminiFlashLiteFinancialExtractionProvider : IStructuredFinancialEx
                     throw new InvalidOperationException($"Gemini structured extraction failed with status code {(int)response.StatusCode}.");
                 }
 
-                return body;
+                return (body, ExtractUsageMetadata(body));
             }
             catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
             {
@@ -538,6 +586,68 @@ OCR text:
             DocumentLanguage.FrenchCanada => "FrenchCanada",
             DocumentLanguage.BilingualCanada => "BilingualCanada",
             _ => "Unknown/auto"
+        };
+    }
+
+    private static GeminiUsageMetadata ExtractUsageMetadata(string responseBody)
+    {
+        using var json = JsonDocument.Parse(responseBody);
+
+        if (!json.RootElement.TryGetProperty("usageMetadata", out var usageMetadataElement))
+        {
+            return new GeminiUsageMetadata(null, null, null);
+        }
+
+        int? inputTokenCount = null;
+        int? outputTokenCount = null;
+
+        if (usageMetadataElement.TryGetProperty("promptTokenCount", out var promptTokenCountElement)
+            && promptTokenCountElement.ValueKind == JsonValueKind.Number
+            && promptTokenCountElement.TryGetInt32(out var promptTokenCount))
+        {
+            inputTokenCount = promptTokenCount;
+        }
+
+        if (usageMetadataElement.TryGetProperty("candidatesTokenCount", out var candidatesTokenCountElement)
+            && candidatesTokenCountElement.ValueKind == JsonValueKind.Number
+            && candidatesTokenCountElement.TryGetInt32(out var candidatesTokenCount))
+        {
+            outputTokenCount = candidatesTokenCount;
+        }
+
+        if (!outputTokenCount.HasValue
+            && usageMetadataElement.TryGetProperty("totalTokenCount", out var totalTokenCountElement)
+            && totalTokenCountElement.ValueKind == JsonValueKind.Number
+            && totalTokenCountElement.TryGetInt32(out var totalTokenCount)
+            && inputTokenCount.HasValue)
+        {
+            outputTokenCount = Math.Max(0, totalTokenCount - inputTokenCount.Value);
+        }
+
+        long? outputBytes = null;
+        if (json.RootElement.TryGetProperty("candidates", out var candidates)
+            && candidates.ValueKind == JsonValueKind.Array
+            && candidates.GetArrayLength() > 0)
+        {
+            var firstCandidateRaw = candidates[0].GetRawText();
+            outputBytes = Encoding.UTF8.GetByteCount(firstCandidateRaw);
+        }
+
+        return new GeminiUsageMetadata(inputTokenCount, outputTokenCount, outputBytes);
+    }
+
+    private static string ResolveErrorCode(Exception exception)
+    {
+        return exception switch
+        {
+            TaskCanceledException => "Timeout",
+            OperationCanceledException => "Canceled",
+            TimeoutException => "Timeout",
+            HttpRequestException => "HttpRequest",
+            JsonException => "InvalidResponseFormat",
+            InvalidOperationException => "InvalidOperation",
+            NotSupportedException => "NotSupported",
+            _ => "UnhandledException"
         };
     }
 

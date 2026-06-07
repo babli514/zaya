@@ -179,3 +179,45 @@ public class ManualCorrectionDto
     public DateTime CorrectedAtUtc { get; set; }
     public string? CorrectedBy { get; set; }
 }
+
+public class ProviderUsageRecordDto
+{
+    public Guid Id { get; set; }
+    public Guid DocumentId { get; set; }
+    public Guid? ExtractionJobId { get; set; }
+    public string ProviderName { get; set; } = string.Empty;
+    public string ModelName { get; set; } = string.Empty;
+    public string OperationType { get; set; } = string.Empty;
+    public DateTime StartedAtUtc { get; set; }
+    public DateTime? CompletedAtUtc { get; set; }
+    public long? LatencyMs { get; set; }
+    public bool Success { get; set; }
+    public string? ErrorCode { get; set; }
+    public string? ErrorMessage { get; set; }
+    public int? InputTokenCount { get; set; }
+    public int? OutputTokenCount { get; set; }
+    public long? InputBytes { get; set; }
+    public long? OutputBytes { get; set; }
+    public decimal? EstimatedCostUsd { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+}
+
+public class ProviderUsageOperationCountDto
+{
+    public string OperationType { get; set; } = string.Empty;
+    public int CallCount { get; set; }
+}
+
+public class ProviderUsageSummaryDto
+{
+    public DateTime FromUtc { get; set; }
+    public DateTime ToUtc { get; set; }
+    public string? ProviderName { get; set; }
+    public string? ModelName { get; set; }
+    public int TotalCalls { get; set; }
+    public int SuccessfulCalls { get; set; }
+    public int FailedCalls { get; set; }
+    public double? AverageLatencyMs { get; set; }
+    public decimal EstimatedTotalCostUsd { get; set; }
+    public List<ProviderUsageOperationCountDto> CallsByOperationType { get; set; } = new();
+}

@@ -14,6 +14,7 @@ public class AppDbContext : DbContext
     public DbSet<ExtractedFinancialDocument> ExtractedFinancialDocuments { get; set; }
     public DbSet<ExtractedLineItem> ExtractedLineItems { get; set; }
     public DbSet<ManualCorrection> ManualCorrections { get; set; }
+    public DbSet<ProviderUsageRecord> ProviderUsageRecords { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -127,6 +127,7 @@ public class DocumentProcessingService : IDocumentProcessingService
             var primaryRequest = new OcrRequest
             {
                 DocumentId = document.Id,
+                ExtractionJobId = extractionJob.Id,
                 FilePath = document.StoragePath ?? string.Empty,
                 ContentType = document.ContentType,
                 RequestedDocumentLanguage = document.DocumentLanguage,
@@ -301,6 +302,7 @@ public class DocumentProcessingService : IDocumentProcessingService
         var extractionInput = new FinancialExtractionInput
         {
             DocumentId = document.Id,
+            ExtractionJobId = ocrResult.ExtractionJobId,
             RawText = ocrResult.RawText,
             DocumentType = document.DocumentType,
             RequestedDocumentLanguage = document.DocumentLanguage,
@@ -385,6 +387,7 @@ public class DocumentProcessingService : IDocumentProcessingService
         var fallbackRequest = new OcrRequest
         {
             DocumentId = document.Id,
+            ExtractionJobId = extractionJob.Id,
             FilePath = document.StoragePath ?? string.Empty,
             ContentType = document.ContentType,
             RequestedDocumentLanguage = document.DocumentLanguage,

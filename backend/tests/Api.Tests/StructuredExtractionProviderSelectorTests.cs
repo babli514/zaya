@@ -355,12 +355,12 @@ public class StructuredExtractionProviderSelectorTests
         private readonly string _fakeJson;
 
         public FakeGeminiStructuredProvider(IOptions<FinancialExtractionOptions> options, string fakeJson)
-            : base(options, new FinancialDocumentValidator())
+            : base(options, null, new FinancialDocumentValidator())
         {
             _fakeJson = fakeJson;
         }
 
-        protected override Task<string> SendGeminiRequestAsync(Uri endpoint, string apiKey, string requestJson, int timeoutSeconds, int maxRetries, CancellationToken cancellationToken)
+        protected override Task<(string ResponseBody, GeminiUsageMetadata UsageMetadata)> SendGeminiRequestAsync(Uri endpoint, string apiKey, string requestJson, int timeoutSeconds, int maxRetries, CancellationToken cancellationToken)
         {
             var wrapped = JsonSerializer.Serialize(new
             {
@@ -379,7 +379,7 @@ public class StructuredExtractionProviderSelectorTests
                 }
             });
 
-            return Task.FromResult(wrapped);
+            return Task.FromResult((wrapped, new GeminiUsageMetadata(null, null, null)));
         }
     }
 

@@ -23,7 +23,7 @@ public class FinancialFieldExtractor : IFinancialFieldExtractor
         _providerSelector = new FinancialExtractionProviderSelector(
             options,
             _ruleBasedProvider,
-            new GeminiFlashLiteFinancialExtractionProvider(options, _validator),
+            new GeminiFlashLiteFinancialExtractionProvider(options, null, _validator),
             new LlmFinancialExtractionProvider(options));
     }
 

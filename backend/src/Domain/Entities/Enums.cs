@@ -48,3 +48,9 @@ public enum ValidationSeverity
     Warning,
     Error
 }
+
+public enum ProviderOperationType
+{
+    Ocr,
+    StructuredExtraction
+}

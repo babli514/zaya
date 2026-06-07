@@ -24,6 +24,7 @@ public class OcrRouteDecision
 public class OcrRequest
 {
     public Guid DocumentId { get; set; }
+    public Guid? ExtractionJobId { get; set; }
     public string FilePath { get; set; } = string.Empty;
     public string ContentType { get; set; } = string.Empty;
     public DocumentLanguage RequestedDocumentLanguage { get; set; }
@@ -36,6 +37,7 @@ public class OcrRequest
 
 public class OcrResult
 {
+    public Guid? ExtractionJobId { get; set; }
     public string RawText { get; set; } = string.Empty;
     public int? PageCount { get; set; }
     public List<string> Warnings { get; set; } = new();
@@ -53,6 +55,7 @@ public class OcrResult
 public class FinancialExtractionInput
 {
     public Guid DocumentId { get; set; }
+    public Guid? ExtractionJobId { get; set; }
     public string RawText { get; set; } = string.Empty;
     public DocumentType DocumentType { get; set; }
     public DocumentLanguage RequestedDocumentLanguage { get; set; }

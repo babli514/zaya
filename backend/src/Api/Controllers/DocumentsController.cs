@@ -3,7 +3,9 @@ using FinancialOCR.Api.Services;
 using FinancialOCR.Application.DTOs;
 using FinancialOCR.Application.Services;
 using FinancialOCR.Domain.Entities;
+using FinancialOCR.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using System.Globalization;
 using System.Text;
@@ -25,6 +27,7 @@ public class DocumentsController : ControllerBase
 
     private readonly IDocumentService _documentService;
     private readonly IDocumentProcessingQueue _documentProcessingQueue;
+    private readonly AppDbContext _dbContext;
     private readonly ILogger<DocumentsController> _logger;
     private readonly DocumentUploadOptions _uploadOptions;
     private readonly IWebHostEnvironment _environment;
@@ -32,12 +35,14 @@ public class DocumentsController : ControllerBase
     public DocumentsController(
         IDocumentService documentService,
         IDocumentProcessingQueue documentProcessingQueue,
+        AppDbContext dbContext,
         ILogger<DocumentsController> logger,
         IOptions<DocumentUploadOptions> uploadOptions,
         IWebHostEnvironment environment)
     {
         _documentService = documentService;
         _documentProcessingQueue = documentProcessingQueue;
+        _dbContext = dbContext;
         _logger = logger;
         _uploadOptions = uploadOptions.Value;
         _environment = environment;
@@ -102,6 +107,120 @@ public class DocumentsController : ControllerBase
         {
             return NotFound();
         }
+    }
+
+    /// <summary>
+    /// Get provider usage records for a document.
+    /// </summary>
+    [HttpGet("{id:guid}/provider-usage")]
+    [ProducesResponseType(typeof(IEnumerable<ProviderUsageRecordDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<IEnumerable<ProviderUsageRecordDto>>> GetDocumentProviderUsage(Guid id, CancellationToken cancellationToken)
+    {
+        var usageRecords = await _dbContext.ProviderUsageRecords
+            .AsNoTracking()
+            .Where(r => r.DocumentId == id)
+            .OrderByDescending(r => r.StartedAtUtc)
+            .Select(r => new ProviderUsageRecordDto
+            {
+                Id = r.Id,
+                DocumentId = r.DocumentId,
+                ExtractionJobId = r.ExtractionJobId,
+                ProviderName = r.ProviderName,
+                ModelName = r.ModelName,
+                OperationType = r.OperationType.ToString(),
+                StartedAtUtc = r.StartedAtUtc,
+                CompletedAtUtc = r.CompletedAtUtc,
+                LatencyMs = r.LatencyMs,
+                Success = r.Success,
+                ErrorCode = r.ErrorCode,
+                ErrorMessage = r.ErrorMessage,
+                InputTokenCount = r.InputTokenCount,
+                OutputTokenCount = r.OutputTokenCount,
+                InputBytes = r.InputBytes,
+                OutputBytes = r.OutputBytes,
+                EstimatedCostUsd = r.EstimatedCostUsd,
+                CreatedAtUtc = r.CreatedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(usageRecords);
+    }
+
+    /// <summary>
+    /// Get provider usage summary for an admin time window.
+    /// </summary>
+    [HttpGet("/api/provider-usage/summary")]
+    [ProducesResponseType(typeof(ProviderUsageSummaryDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<ProviderUsageSummaryDto>> GetProviderUsageSummary(
+        [FromQuery] DateTime fromUtc,
+        [FromQuery] DateTime toUtc,
+        [FromQuery] string? providerName,
+        [FromQuery] string? modelName,
+        CancellationToken cancellationToken)
+    {
+        if (fromUtc == default || toUtc == default)
+        {
+            return BadRequest("fromUtc and toUtc are required.");
+        }
+
+        if (toUtc < fromUtc)
+        {
+            return BadRequest("toUtc must be greater than or equal to fromUtc.");
+        }
+
+        var query = _dbContext.ProviderUsageRecords
+            .AsNoTracking()
+            .Where(r => r.StartedAtUtc >= fromUtc && r.StartedAtUtc <= toUtc);
+
+        if (!string.IsNullOrWhiteSpace(providerName))
+        {
+            query = query.Where(r => r.ProviderName == providerName);
+        }
+
+        if (!string.IsNullOrWhiteSpace(modelName))
+        {
+            query = query.Where(r => r.ModelName == modelName);
+        }
+
+        var totalCalls = await query.CountAsync(cancellationToken);
+        var successfulCalls = await query.CountAsync(r => r.Success, cancellationToken);
+        var failedCalls = totalCalls - successfulCalls;
+
+        var averageLatencyMs = await query
+            .Where(r => r.LatencyMs.HasValue)
+            .Select(r => (double?)r.LatencyMs!.Value)
+            .AverageAsync(cancellationToken);
+
+        var estimatedTotalCostUsd = await query
+            .Select(r => r.EstimatedCostUsd)
+            .SumAsync(cancellationToken) ?? 0m;
+
+        var callsByOperationType = await query
+            .GroupBy(r => r.OperationType)
+            .Select(g => new ProviderUsageOperationCountDto
+            {
+                OperationType = g.Key.ToString(),
+                CallCount = g.Count()
+            })
+            .OrderBy(x => x.OperationType)
+            .ToListAsync(cancellationToken);
+
+        var summary = new ProviderUsageSummaryDto
+        {
+            FromUtc = fromUtc,
+            ToUtc = toUtc,
+            ProviderName = providerName,
+            ModelName = modelName,
+            TotalCalls = totalCalls,
+            SuccessfulCalls = successfulCalls,
+            FailedCalls = failedCalls,
+            AverageLatencyMs = averageLatencyMs,
+            EstimatedTotalCostUsd = estimatedTotalCostUsd,
+            CallsByOperationType = callsByOperationType
+        };
+
+        return Ok(summary);
     }
 
     /// <summary>
