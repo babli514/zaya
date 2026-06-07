@@ -56,6 +56,8 @@ builder.Services.AddScoped<IFinancialDocumentValidator, FinancialDocumentValidat
 builder.Services.AddScoped<ITesseractOcrEngineAdapter, TesseractOcrEngineAdapter>();
 builder.Services.AddScoped<IOcrProvider, NativePdfTextOcrProvider>();
 builder.Services.AddScoped<IOcrProvider, TesseractOcrProvider>();
+builder.Services.AddScoped<IOcrProvider, GeminiFlashLiteOcrProvider>();
+builder.Services.AddScoped<IOcrProvider, VisionFallbackOcrProvider>();
 
 // Health checks
 builder.Services.AddHealthChecks()

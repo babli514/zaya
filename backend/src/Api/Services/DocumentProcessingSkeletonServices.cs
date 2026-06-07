@@ -2,6 +2,7 @@ using FinancialOCR.Api.Options;
 using FinancialOCR.Application.DTOs;
 using FinancialOCR.Application.Services;
 using FinancialOCR.Domain.Entities;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
 using System.Text;
@@ -25,24 +26,26 @@ public class OcrRouter : IOcrRouter
         var contentType = document.ContentType ?? string.Empty;
         var isPdf = string.Equals(fileExtension, ".pdf", StringComparison.OrdinalIgnoreCase)
             || string.Equals(contentType, "application/pdf", StringComparison.OrdinalIgnoreCase);
-
         var isImage = IsSupportedImageFile(fileExtension, contentType);
-        var preferredVisionProvider = string.IsNullOrWhiteSpace(_ocrOptions.PreferredVisionProvider)
-            ? "Gemini"
-            : _ocrOptions.PreferredVisionProvider;
 
+        var vision = _ocrOptions.VisionOcr;
         var engineType = OcrEngineType.Unknown;
         var providerName = "Unsupported";
 
-        if (isPdf)
+        if (isPdf && _ocrOptions.EnableNativePdfText)
         {
             engineType = OcrEngineType.NativePdfText;
             providerName = "NativePdf";
         }
-        else if (isImage)
+        else if (isImage && _ocrOptions.EnableTesseract)
         {
             engineType = OcrEngineType.Tesseract;
             providerName = "Tesseract";
+        }
+        else if (vision.FallbackEnabled)
+        {
+            engineType = OcrEngineType.VisionFallback;
+            providerName = vision.PreferredProvider;
         }
 
         return Task.FromResult(new OcrRouteDecision
@@ -50,10 +53,16 @@ public class OcrRouter : IOcrRouter
             OcrEngineType = engineType,
             RequestedDocumentLanguage = document.DocumentLanguage,
             DetectedLanguage = document.DocumentLanguage,
-            PreferredVisionProvider = preferredVisionProvider,
+            PreferredVisionProvider = vision.PreferredProvider,
             ProviderName = providerName,
             ModelName = string.Empty,
-            UseVisionFallback = true
+            UseVisionFallback = vision.FallbackEnabled,
+            FallbackOcrEngineType = OcrEngineType.VisionFallback,
+            MinPrimaryOcrConfidence = vision.MinPrimaryOcrConfidence,
+            MinRawTextLength = vision.MinRawTextLength,
+            UseForLowConfidenceResults = vision.UseForLowConfidenceResults,
+            UseForValidationFailures = vision.UseForValidationFailures,
+            UseForScannedPdf = vision.UseForScannedPdf
         });
     }
 
@@ -385,35 +394,42 @@ public class GeminiFlashLiteOcrProvider : IOcrProvider
 
     public Task<OcrResult> ExtractAsync(OcrRequest request, CancellationToken cancellationToken)
     {
-        var providerName = string.IsNullOrWhiteSpace(_ocrOptions.PreferredVisionProvider)
-            ? "Gemini"
-            : _ocrOptions.PreferredVisionProvider;
+        var settings = _ocrOptions.VisionOcr.GeminiFlashLite;
+        if (!settings.Enabled)
+        {
+            throw new NotSupportedException("Gemini Flash Lite provider is disabled.");
+        }
 
-        var modelName = string.IsNullOrWhiteSpace(_ocrOptions.GeminiModelName)
-            ? "configured-at-runtime"
-            : _ocrOptions.GeminiModelName;
+        if (string.IsNullOrWhiteSpace(settings.ApiKey) || string.IsNullOrWhiteSpace(settings.Model) || settings.Model == "CONFIGURE_ACTUAL_MODEL_ID_HERE")
+        {
+            throw new InvalidOperationException("Gemini Flash Lite provider is enabled but not fully configured. Missing ApiKey or Model.");
+        }
 
         return Task.FromResult(new OcrResult
         {
-            RawText = "Placeholder gemini flash lite OCR result",
+            RawText = string.Empty,
+            PageCount = 0,
+            Warnings = new List<string> { "Gemini Flash Lite integration is configured but not implemented yet." },
             RequestedDocumentLanguage = request.RequestedDocumentLanguage,
             DetectedLanguage = request.DetectedLanguage,
-            PreferredVisionProvider = providerName,
+            PreferredVisionProvider = _ocrOptions.VisionOcr.PreferredProvider,
             OcrEngineType = EngineType,
-            ProviderName = providerName,
-            ModelName = modelName,
-            ProviderLatencyMs = 120,
-            Confidence = 0.9m
+            ProviderName = string.IsNullOrWhiteSpace(settings.ProviderName) ? "GoogleGemini" : settings.ProviderName,
+            ModelName = settings.Model,
+            ProviderLatencyMs = 0,
+            Confidence = 0m
         });
     }
 }
 
 public class VisionFallbackOcrProvider : IOcrProvider
 {
+    private readonly IServiceProvider _serviceProvider;
     private readonly OcrOptions _ocrOptions;
 
-    public VisionFallbackOcrProvider(IOptions<OcrOptions> ocrOptions)
+    public VisionFallbackOcrProvider(IServiceProvider serviceProvider, IOptions<OcrOptions> ocrOptions)
     {
+        _serviceProvider = serviceProvider;
         _ocrOptions = ocrOptions.Value;
     }
 
@@ -421,26 +437,21 @@ public class VisionFallbackOcrProvider : IOcrProvider
 
     public Task<OcrResult> ExtractAsync(OcrRequest request, CancellationToken cancellationToken)
     {
-        var providerName = string.IsNullOrWhiteSpace(_ocrOptions.PreferredVisionProvider)
-            ? "Gemini"
-            : _ocrOptions.PreferredVisionProvider;
-
-        var modelName = string.IsNullOrWhiteSpace(_ocrOptions.GeminiModelName)
-            ? "configured-at-runtime"
-            : _ocrOptions.GeminiModelName;
-
-        return Task.FromResult(new OcrResult
+        if (!_ocrOptions.VisionOcr.FallbackEnabled)
         {
-            RawText = "Placeholder vision fallback OCR result",
-            RequestedDocumentLanguage = request.RequestedDocumentLanguage,
-            DetectedLanguage = request.DetectedLanguage,
-            PreferredVisionProvider = providerName,
-            OcrEngineType = EngineType,
-            ProviderName = providerName,
-            ModelName = modelName,
-            ProviderLatencyMs = 180,
-            Confidence = 0.75m
-        });
+            throw new NotSupportedException("Vision fallback OCR is disabled.");
+        }
+
+        if (string.Equals(_ocrOptions.VisionOcr.PreferredProvider, "GeminiFlashLite", StringComparison.OrdinalIgnoreCase))
+        {
+            var gemini = _serviceProvider.GetServices<IOcrProvider>().FirstOrDefault(p => p.EngineType == OcrEngineType.GeminiFlashLite);
+            if (gemini != null)
+            {
+                return gemini.ExtractAsync(request, cancellationToken);
+            }
+        }
+
+        throw new NotSupportedException("No enabled vision fallback provider is registered.");
     }
 }
 

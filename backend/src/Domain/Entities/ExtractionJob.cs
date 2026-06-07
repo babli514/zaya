@@ -15,6 +15,10 @@ public class ExtractionJob
     public OcrEngineType PrimaryOcrEngine { get; set; }
     public OcrEngineType? FallbackOcrEngine { get; set; }
     public bool FallbackUsed { get; set; }
+    public string? PrimaryProviderName { get; set; }
+    public string? PrimaryModelName { get; set; }
+    public string? FallbackProviderName { get; set; }
+    public string? FallbackModelName { get; set; }
 
     public string? RawText { get; set; }
 

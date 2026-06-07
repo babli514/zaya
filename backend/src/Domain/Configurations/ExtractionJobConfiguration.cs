@@ -30,6 +30,18 @@ public class ExtractionJobConfiguration : IEntityTypeConfiguration<ExtractionJob
         builder.Property(e => e.RawText)
             .HasColumnType("nvarchar(max)");
 
+        builder.Property(e => e.PrimaryProviderName)
+            .HasMaxLength(200);
+
+        builder.Property(e => e.PrimaryModelName)
+            .HasMaxLength(200);
+
+        builder.Property(e => e.FallbackProviderName)
+            .HasMaxLength(200);
+
+        builder.Property(e => e.FallbackModelName)
+            .HasMaxLength(200);
+
         builder.Property(e => e.WarningsJson)
             .HasColumnType("nvarchar(max)");
 

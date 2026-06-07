@@ -5,13 +5,33 @@ public class OcrOptions
     public const string SectionName = "Ocr";
     public bool EnableNativePdfText { get; set; } = true;
     public bool EnableTesseract { get; set; } = true;
-    public bool PreferVisionFallback { get; set; } = false;
-    public string PreferredVisionProvider { get; set; } = "Gemini";
-    public string GeminiModelName { get; set; } = string.Empty;
-    public string GeminiApiKey { get; set; } = string.Empty;
     public string TesseractDataPath { get; set; } = "App_Data/tessdata";
     public string DefaultLanguage { get; set; } = "eng+fra";
     public string EnglishLanguage { get; set; } = "eng";
     public string FrenchLanguage { get; set; } = "fra";
     public string BilingualLanguage { get; set; } = "eng+fra";
+    public VisionOcrOptions VisionOcr { get; set; } = new();
+}
+
+public class VisionOcrOptions
+{
+    public string PreferredProvider { get; set; } = "GeminiFlashLite";
+    public bool FallbackEnabled { get; set; } = true;
+    public bool UseForScannedPdf { get; set; } = true;
+    public bool UseForLowConfidenceResults { get; set; } = true;
+    public bool UseForValidationFailures { get; set; } = true;
+    public decimal MinPrimaryOcrConfidence { get; set; } = 0.75m;
+    public int MinRawTextLength { get; set; } = 80;
+    public GeminiFlashLiteOptions GeminiFlashLite { get; set; } = new();
+}
+
+public class GeminiFlashLiteOptions
+{
+    public bool Enabled { get; set; } = true;
+    public string ProviderName { get; set; } = "GoogleGemini";
+    public string Model { get; set; } = "CONFIGURE_ACTUAL_MODEL_ID_HERE";
+    public string ApiKey { get; set; } = string.Empty;
+    public string Endpoint { get; set; } = string.Empty;
+    public int TimeoutSeconds { get; set; } = 60;
+    public int MaxRetries { get; set; } = 2;
 }
