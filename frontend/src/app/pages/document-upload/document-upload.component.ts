@@ -118,7 +118,7 @@ const DOCUMENT_LANGUAGE_OPTIONS: LabelOption<UploadDocumentLanguage>[] = [
         <div class="button-row">
           <button
             type="button"
-            [disabled]="!selectedFile || uploading || processing"
+            [disabled]="selectedFiles.length === 0 || uploading || processing"
             (click)="submit('uploadOnly')"
             class="btn btn-primary btn-lg"
           >
@@ -127,7 +127,7 @@ const DOCUMENT_LANGUAGE_OPTIONS: LabelOption<UploadDocumentLanguage>[] = [
 
           <button
             type="button"
-            [disabled]="!selectedFile || uploading || processing"
+            [disabled]="selectedFiles.length === 0 || uploading || processing"
             (click)="submit('uploadAndProcess')"
             class="btn btn-primary btn-lg"
           >
@@ -313,11 +313,12 @@ export class DocumentUploadComponent {
   readonly documentTypeOptions = DOCUMENT_TYPE_OPTIONS;
   readonly documentLanguageOptions = DOCUMENT_LANGUAGE_OPTIONS;
 
+  readonly maxSelectableFiles = 1;
   readonly maxFileSizeBytes = 10 * 1024 * 1024;
   readonly allowedMimeTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
   readonly allowedExtensions = ['pdf', 'png', 'jpg', 'jpeg', 'webp'];
 
-  selectedFile: File | null = null;
+  selectedFiles: File[] = [];
   selectedFileDisplay = '';
   documentType: UploadDocumentType = 'receipt';
   documentLanguage: UploadDocumentLanguage = 'auto';
@@ -335,17 +336,18 @@ export class DocumentUploadComponent {
 
   onFileSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
-    const file = input.files && input.files.length > 0 ? input.files[0] : null;
+    const files = this.getSelectedFiles(input);
 
     this.error = '';
     this.successMessage = '';
-    this.selectedFile = null;
+    this.selectedFiles = [];
     this.selectedFileDisplay = '';
 
-    if (!file) {
+    if (files.length === 0) {
       return;
     }
 
+    const file = files[0];
     if (!this.isSupportedFileType(file)) {
       this.error = this.labels.file.invalidType;
       return;
@@ -356,12 +358,13 @@ export class DocumentUploadComponent {
       return;
     }
 
-    this.selectedFile = file;
+    this.selectedFiles = [file];
     this.selectedFileDisplay = `${file.name} (${this.formatFileSize(file.size)})`;
   }
 
   submit(mode: UploadMode): void {
-    if (!this.selectedFile) {
+    const uploadFile = this.selectedFiles[0];
+    if (!uploadFile) {
       this.error = this.labels.validation.fileRequired;
       return;
     }
@@ -372,7 +375,7 @@ export class DocumentUploadComponent {
     this.error = '';
     this.successMessage = '';
 
-    this.documentService.uploadDocument(this.selectedFile, this.documentType, this.documentLanguage).subscribe({
+    this.documentService.uploadDocument(uploadFile, this.documentType, this.documentLanguage).subscribe({
       next: (event) => {
         if (event.type === HttpEventType.UploadProgress) {
           if (event.total && event.total > 0) {
@@ -421,6 +424,16 @@ export class DocumentUploadComponent {
     setTimeout(() => {
       this.router.navigate(['/documents', documentId]);
     }, 700);
+  }
+
+  private getSelectedFiles(input: HTMLInputElement): File[] {
+    const fileList = input.files;
+    if (!fileList || fileList.length === 0) {
+      return [];
+    }
+
+    const files = Array.from(fileList);
+    return files.slice(0, this.maxSelectableFiles);
   }
 
   private isSupportedFileType(file: File): boolean {

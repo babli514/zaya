@@ -233,40 +233,35 @@ public class DocumentsController : ControllerBase
             return BadRequest($"File size exceeds the maximum allowed size of {(_uploadOptions.MaxFileSizeMb <= 0 ? 10 : _uploadOptions.MaxFileSizeMb)} MB.");
         }
 
-        var extension = ResolveExtension(file.FileName, file.ContentType);
-        if (string.IsNullOrEmpty(extension))
+        UploadDocumentRequestDto requestDto;
+        try
         {
-            return BadRequest("Unable to resolve a valid file extension for the uploaded file.");
+            requestDto = await SaveSingleFileAndBuildUploadRequestAsync(file, mappedDocumentType, mappedDocumentLanguage, cancellationToken);
         }
-
-        var safeStoredFileName = $"{Guid.NewGuid():N}{extension}";
-        var configuredRoot = string.IsNullOrWhiteSpace(_uploadOptions.RootFolder) ? Path.Combine("App_Data", "uploads") : _uploadOptions.RootFolder;
-        var storageRoot = Path.IsPathRooted(configuredRoot) ? configuredRoot : Path.Combine(_environment.ContentRootPath, configuredRoot);
-        Directory.CreateDirectory(storageRoot);
-
-        var physicalFilePath = Path.Combine(storageRoot, safeStoredFileName);
-        await using (var stream = new FileStream(physicalFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        catch (InvalidOperationException ex)
         {
-            await file.CopyToAsync(stream, cancellationToken);
+            return BadRequest(ex.Message);
         }
-
-        var relativeStoragePath = Path.Combine(configuredRoot, safeStoredFileName);
-
-        var requestDto = new UploadDocumentRequestDto
-        {
-            OriginalFileName = Path.GetFileName(file.FileName),
-            StoredFileName = safeStoredFileName,
-            StoragePath = relativeStoragePath,
-            ContentType = file.ContentType,
-            FileExtension = extension,
-            FileSizeBytes = file.Length,
-            DocumentType = mappedDocumentType,
-            DocumentLanguage = mappedDocumentLanguage
-        };
 
         var response = await _documentService.UploadDocumentAsync(requestDto, cancellationToken);
         _logger.LogInformation("Document uploaded {DocumentId}", response.DocumentId);
         return CreatedAtAction(nameof(GetDocument), new { id = response.DocumentId }, response);
+    }
+
+    /// <summary>
+    /// Placeholder route for future multi-file batch upload.
+    /// </summary>
+    /// <remarks>
+    /// Planned contract (not implemented in MVP):
+    /// POST /api/documents/batch-upload
+    /// Request: multipart/form-data with repeated files + shared/default metadata.
+    /// Response: per-file document IDs and per-file validation errors.
+    /// </remarks>
+    [HttpPost("batch-upload")]
+    [ProducesResponseType(StatusCodes.Status501NotImplemented)]
+    public IActionResult BatchUploadNotImplemented()
+    {
+        return StatusCode(StatusCodes.Status501NotImplemented, new { message = "Batch upload is planned but not implemented yet." });
     }
 
     /// <summary>
@@ -520,6 +515,44 @@ public class DocumentsController : ControllerBase
         }
 
         return builder.ToString();
+    }
+
+    private async Task<UploadDocumentRequestDto> SaveSingleFileAndBuildUploadRequestAsync(
+        IFormFile file,
+        DocumentType documentType,
+        DocumentLanguage documentLanguage,
+        CancellationToken cancellationToken)
+    {
+        var extension = ResolveExtension(file.FileName, file.ContentType);
+        if (string.IsNullOrEmpty(extension))
+        {
+            throw new InvalidOperationException("Unable to resolve a valid file extension for the uploaded file.");
+        }
+
+        var safeStoredFileName = $"{Guid.NewGuid():N}{extension}";
+        var configuredRoot = string.IsNullOrWhiteSpace(_uploadOptions.RootFolder) ? Path.Combine("App_Data", "uploads") : _uploadOptions.RootFolder;
+        var storageRoot = Path.IsPathRooted(configuredRoot) ? configuredRoot : Path.Combine(_environment.ContentRootPath, configuredRoot);
+        Directory.CreateDirectory(storageRoot);
+
+        var physicalFilePath = Path.Combine(storageRoot, safeStoredFileName);
+        await using (var stream = new FileStream(physicalFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            await file.CopyToAsync(stream, cancellationToken);
+        }
+
+        var relativeStoragePath = Path.Combine(configuredRoot, safeStoredFileName);
+
+        return new UploadDocumentRequestDto
+        {
+            OriginalFileName = Path.GetFileName(file.FileName),
+            StoredFileName = safeStoredFileName,
+            StoragePath = relativeStoragePath,
+            ContentType = file.ContentType,
+            FileExtension = extension,
+            FileSizeBytes = file.Length,
+            DocumentType = documentType,
+            DocumentLanguage = documentLanguage
+        };
     }
 
     private static string ResolveExtension(string originalFileName, string contentType)

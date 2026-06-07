@@ -147,15 +147,25 @@ export class DocumentService {
   }
 
   uploadDocument(file: File, documentType: UploadDocumentType, documentLanguage: UploadDocumentLanguage): Observable<HttpEvent<UploadDocumentResponseDto>> {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('documentType', documentType);
-    formData.append('documentLanguage', documentLanguage);
+    const formData = this.createUploadFormData([file], documentType, documentLanguage);
 
     return this.http.post<UploadDocumentResponseDto>(`${this.apiUrl}/upload`, formData, {
       observe: 'events',
       reportProgress: true
     });
+  }
+
+  private createUploadFormData(files: readonly File[], documentType: UploadDocumentType, documentLanguage: UploadDocumentLanguage): FormData {
+    const formData = new FormData();
+    const file = files[0];
+
+    if (file) {
+      formData.append('file', file);
+    }
+
+    formData.append('documentType', documentType);
+    formData.append('documentLanguage', documentLanguage);
+    return formData;
   }
 
   processDocument(id: string): Observable<DocumentDetailDto> {
