@@ -50,6 +50,11 @@ public interface IFinancialDocumentValidator
     FinancialValidationResult Validate(FinancialExtractionResult result, DocumentType documentType);
 }
 
+public interface IConfidenceScoringService
+{
+    decimal CalculateOverallConfidence(ConfidenceScoringInput input);
+}
+
 public class DocumentProcessingService : IDocumentProcessingService
 {
     private readonly AppDbContext _dbContext;
@@ -58,6 +63,7 @@ public class DocumentProcessingService : IDocumentProcessingService
     private readonly ILanguageDetectionService _languageDetectionService;
     private readonly IFinancialFieldExtractor _financialFieldExtractor;
     private readonly IFinancialDocumentValidator _financialDocumentValidator;
+    private readonly IConfidenceScoringService _confidenceScoringService;
     private readonly IDocumentService _documentService;
     private readonly ILogger<DocumentProcessingService> _logger;
 
@@ -68,6 +74,7 @@ public class DocumentProcessingService : IDocumentProcessingService
         ILanguageDetectionService languageDetectionService,
         IFinancialFieldExtractor financialFieldExtractor,
         IFinancialDocumentValidator financialDocumentValidator,
+        IConfidenceScoringService confidenceScoringService,
         IDocumentService documentService,
         ILogger<DocumentProcessingService> logger)
     {
@@ -77,6 +84,7 @@ public class DocumentProcessingService : IDocumentProcessingService
         _languageDetectionService = languageDetectionService;
         _financialFieldExtractor = financialFieldExtractor;
         _financialDocumentValidator = financialDocumentValidator;
+        _confidenceScoringService = confidenceScoringService;
         _documentService = documentService;
         _logger = logger;
     }
@@ -145,6 +153,7 @@ public class DocumentProcessingService : IDocumentProcessingService
             extractionJob.FallbackUsed = false;
 
             var processing = await RunExtractionAndValidationAsync(document, primaryOcrResult, cancellationToken);
+            var primaryProcessing = CloneAttempt(processing);
             var processingWarnings = new List<string>();
 
             var fallbackReason = ResolveFallbackReason(route, primaryOcrResult, processing.ValidationResult);
@@ -159,7 +168,32 @@ public class DocumentProcessingService : IDocumentProcessingService
             }
 
             var allWarnings = BuildWarnings(processing.ValidationResult, processing.OcrResult, processingWarnings);
-            var finalConfidence = CalculateOverallConfidence(processing.ExtractionResult.Confidence, processing.OcrResult.Confidence, processing.ValidationResult.ConfidenceAdjustment);
+            var fallbackNeeded = fallbackReason != null;
+            var geminiFlashLiteUsed = processing.OcrResult.OcrEngineType == OcrEngineType.GeminiFlashLite
+                || (processing.OcrResult.ProviderName?.Contains("gemini", StringComparison.OrdinalIgnoreCase) ?? false)
+                || extractionJob.FallbackOcrEngine == OcrEngineType.GeminiFlashLite;
+            var geminiUsedAfterLowConfidencePrimary = fallbackNeeded
+                && processing.OcrResult.OcrEngineType == OcrEngineType.GeminiFlashLite
+                && (!primaryProcessing.OcrResult.Confidence.HasValue || primaryProcessing.OcrResult.Confidence.Value < route.MinimumOcrConfidence);
+            var geminiExtractionConflictsWithDeterministic = extractionJob.FallbackUsed
+                && processing.OcrResult.OcrEngineType == OcrEngineType.GeminiFlashLite
+                && HasMeaningfulExtractionConflict(primaryProcessing.ExtractionResult, processing.ExtractionResult, document.DocumentType);
+            var finalConfidence = _confidenceScoringService.CalculateOverallConfidence(new ConfidenceScoringInput
+            {
+                DocumentType = document.DocumentType,
+                ExtractionResult = processing.ExtractionResult,
+                ValidationResult = processing.ValidationResult,
+                OcrConfidence = processing.OcrResult.Confidence,
+                StructuredExtractionConfidence = processing.ExtractionResult.Confidence,
+                RequestedDocumentLanguage = document.DocumentLanguage,
+                DetectedDocumentLanguage = processing.DetectedLanguage,
+                RawText = processing.OcrResult.RawText,
+                FallbackNeeded = fallbackNeeded,
+                FallbackUsed = extractionJob.FallbackUsed,
+                GeminiFlashLiteUsed = geminiFlashLiteUsed,
+                GeminiUsedAfterLowConfidencePrimary = geminiUsedAfterLowConfidencePrimary,
+                GeminiExtractionConflictsWithDeterministic = geminiExtractionConflictsWithDeterministic
+            });
             extractionJob.DetectedLanguage = processing.DetectedLanguage;
             extractionJob.RawText = processing.OcrResult.RawText;
             extractionJob.OverallConfidence = finalConfidence;
@@ -226,8 +260,7 @@ public class DocumentProcessingService : IDocumentProcessingService
             var hasValidationIssues = processing.ValidationResult.Warnings.Any(w => w.Severity != ValidationSeverity.Info);
             document.ProcessingStatus = processing.ValidationResult.IsValid
                 && !hasValidationIssues
-                && finalConfidence.HasValue
-                && finalConfidence.Value >= route.AutoCompleteConfidenceThreshold
+                && finalConfidence >= route.AutoCompleteConfidenceThreshold
                 ? ProcessingStatus.Completed
                 : ProcessingStatus.NeedsReview;
             document.ProcessedAtUtc = DateTime.UtcNow;
@@ -401,26 +434,108 @@ public class DocumentProcessingService : IDocumentProcessingService
         }
     }
 
-    private static decimal? CalculateOverallConfidence(decimal? extractionConfidence, decimal? ocrConfidence, decimal adjustment)
+    private static ProcessingAttempt CloneAttempt(ProcessingAttempt source)
     {
-        var baseConfidence = extractionConfidence ?? ocrConfidence;
-        if (!baseConfidence.HasValue)
+        return new ProcessingAttempt
         {
-            return null;
+            OcrResult = new OcrResult
+            {
+                RawText = source.OcrResult.RawText,
+                PageCount = source.OcrResult.PageCount,
+                Warnings = source.OcrResult.Warnings.ToList(),
+                RequestedDocumentLanguage = source.OcrResult.RequestedDocumentLanguage,
+                DetectedLanguage = source.OcrResult.DetectedLanguage,
+                PreferredVisionProvider = source.OcrResult.PreferredVisionProvider,
+                OcrEngineType = source.OcrResult.OcrEngineType,
+                ProviderName = source.OcrResult.ProviderName,
+                ModelName = source.OcrResult.ModelName,
+                ProviderLatencyMs = source.OcrResult.ProviderLatencyMs,
+                ProviderCostEstimate = source.OcrResult.ProviderCostEstimate,
+                Confidence = source.OcrResult.Confidence
+            },
+            ExtractionResult = CloneExtractionResult(source.ExtractionResult),
+            ValidationResult = new FinancialValidationResult
+            {
+                IsValid = source.ValidationResult.IsValid,
+                ConfidenceAdjustment = source.ValidationResult.ConfidenceAdjustment,
+                ValidationSummary = source.ValidationResult.ValidationSummary,
+                Warnings = source.ValidationResult.Warnings.Select(w => new ValidationWarning
+                {
+                    Code = w.Code,
+                    MessageEn = w.MessageEn,
+                    MessageFr = w.MessageFr,
+                    Severity = w.Severity,
+                    FieldName = w.FieldName
+                }).ToList(),
+                RequestedDocumentLanguage = source.ValidationResult.RequestedDocumentLanguage,
+                DetectedLanguage = source.ValidationResult.DetectedLanguage,
+                PreferredVisionProvider = source.ValidationResult.PreferredVisionProvider,
+                OcrEngineType = source.ValidationResult.OcrEngineType,
+                ProviderName = source.ValidationResult.ProviderName,
+                ModelName = source.ValidationResult.ModelName,
+                ProviderLatencyMs = source.ValidationResult.ProviderLatencyMs,
+                ProviderCostEstimate = source.ValidationResult.ProviderCostEstimate
+            },
+            DetectedLanguage = source.DetectedLanguage
+        };
+    }
+
+    private static FinancialExtractionResult CloneExtractionResult(FinancialExtractionResult source)
+    {
+        return new FinancialExtractionResult
+        {
+            VendorName = source.VendorName,
+            CustomerName = source.CustomerName,
+            DocumentNumber = source.DocumentNumber,
+            DocumentDate = source.DocumentDate,
+            DueDate = source.DueDate,
+            Currency = source.Currency,
+            Subtotal = source.Subtotal,
+            Gst = source.Gst,
+            Qst = source.Qst,
+            Hst = source.Hst,
+            Pst = source.Pst,
+            Tip = source.Tip,
+            Discount = source.Discount,
+            Total = source.Total,
+            LineItems = source.LineItems.Select(li => new FinancialExtractionLineItem
+            {
+                Description = li.Description,
+                Quantity = li.Quantity,
+                UnitPrice = li.UnitPrice,
+                Amount = li.Amount
+            }).ToList(),
+            Confidence = source.Confidence,
+            RequestedDocumentLanguage = source.RequestedDocumentLanguage,
+            DetectedLanguage = source.DetectedLanguage,
+            PreferredVisionProvider = source.PreferredVisionProvider,
+            OcrEngineType = source.OcrEngineType,
+            ProviderName = source.ProviderName,
+            ModelName = source.ModelName,
+            ProviderLatencyMs = source.ProviderLatencyMs,
+            ProviderCostEstimate = source.ProviderCostEstimate
+        };
+    }
+
+    private static bool HasMeaningfulExtractionConflict(FinancialExtractionResult deterministic, FinancialExtractionResult fallback, DocumentType documentType)
+    {
+        if (deterministic.Total.HasValue && fallback.Total.HasValue && Math.Abs(deterministic.Total.Value - fallback.Total.Value) > 0.02m)
+        {
+            return true;
         }
 
-        var adjusted = baseConfidence.Value + adjustment;
-        if (adjusted < 0m)
+        if (deterministic.DocumentDate.HasValue && fallback.DocumentDate.HasValue && deterministic.DocumentDate.Value.Date != fallback.DocumentDate.Value.Date)
         {
-            return 0m;
+            return true;
         }
 
-        if (adjusted > 1m)
+        if (documentType == DocumentType.Invoice && !string.IsNullOrWhiteSpace(deterministic.DocumentNumber) && !string.IsNullOrWhiteSpace(fallback.DocumentNumber)
+            && !string.Equals(deterministic.DocumentNumber, fallback.DocumentNumber, StringComparison.OrdinalIgnoreCase))
         {
-            return 1m;
+            return true;
         }
 
-        return adjusted;
+        return false;
     }
 
     private static List<ValidationWarning> BuildWarnings(FinancialValidationResult validationResult, OcrResult ocrResult, IReadOnlyCollection<string>? processWarnings = null)

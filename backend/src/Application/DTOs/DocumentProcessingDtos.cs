@@ -135,3 +135,20 @@ public class FinancialValidationResult
     public long? ProviderLatencyMs { get; set; }
     public decimal? ProviderCostEstimate { get; set; }
 }
+
+public class ConfidenceScoringInput
+{
+    public DocumentType DocumentType { get; set; }
+    public FinancialExtractionResult ExtractionResult { get; set; } = new();
+    public FinancialValidationResult ValidationResult { get; set; } = new();
+    public decimal? OcrConfidence { get; set; }
+    public decimal? StructuredExtractionConfidence { get; set; }
+    public DocumentLanguage RequestedDocumentLanguage { get; set; }
+    public DocumentLanguage DetectedDocumentLanguage { get; set; }
+    public string RawText { get; set; } = string.Empty;
+    public bool FallbackNeeded { get; set; }
+    public bool FallbackUsed { get; set; }
+    public bool GeminiFlashLiteUsed { get; set; }
+    public bool GeminiUsedAfterLowConfidencePrimary { get; set; }
+    public bool GeminiExtractionConflictsWithDeterministic { get; set; }
+}

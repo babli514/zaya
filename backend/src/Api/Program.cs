@@ -59,6 +59,7 @@ builder.Services.AddScoped<LlmFinancialExtractionProvider>();
 builder.Services.AddScoped<IFinancialExtractionProviderSelector, FinancialExtractionProviderSelector>();
 builder.Services.AddScoped<IFinancialFieldExtractor, FinancialFieldExtractor>();
 builder.Services.AddScoped<IFinancialDocumentValidator, FinancialDocumentValidator>();
+builder.Services.AddScoped<IConfidenceScoringService, ConfidenceScoringService>();
 builder.Services.AddScoped<ITesseractOcrEngineAdapter, TesseractOcrEngineAdapter>();
 builder.Services.AddScoped<IOcrProvider, NativePdfTextOcrProvider>();
 builder.Services.AddScoped<IOcrProvider, TesseractOcrProvider>();

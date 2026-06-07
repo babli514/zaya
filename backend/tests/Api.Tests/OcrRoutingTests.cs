@@ -409,6 +409,7 @@ public class OcrRoutingTests
             new LanguageDetectionService(),
             fieldExtractor,
             validator,
+            new PassThroughConfidenceScoringService(),
             new StubDocumentService(),
             NullLogger<DocumentProcessingService>.Instance);
 
@@ -520,6 +521,24 @@ public class OcrRoutingTests
                     }
                 ]
             };
+        }
+    }
+
+    private sealed class PassThroughConfidenceScoringService : IConfidenceScoringService
+    {
+        public decimal CalculateOverallConfidence(ConfidenceScoringInput input)
+        {
+            if (input.StructuredExtractionConfidence.HasValue)
+            {
+                return input.StructuredExtractionConfidence.Value;
+            }
+
+            if (input.OcrConfidence.HasValue)
+            {
+                return input.OcrConfidence.Value;
+            }
+
+            return 0.75m;
         }
     }
 

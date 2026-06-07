@@ -188,4 +188,260 @@ public class FinancialValidationAndNormalizationTests
             Assert.False(string.IsNullOrWhiteSpace(w.MessageFr));
         });
     }
+
+    [Fact]
+    public void ConfidenceScoring_English_Receipt_High_When_Valid()
+    {
+        var service = new ConfidenceScoringService();
+        var extraction = new FinancialExtractionResult
+        {
+            VendorName = "Store",
+            DocumentDate = new DateTime(2026, 5, 31),
+            Subtotal = 100m,
+            Gst = 5m,
+            Qst = 9.98m,
+            Total = 114.98m,
+            Confidence = 0.84m
+        };
+        var validation = new FinancialDocumentValidator().Validate(extraction, DocumentType.Receipt);
+
+        var score = service.CalculateOverallConfidence(new ConfidenceScoringInput
+        {
+            DocumentType = DocumentType.Receipt,
+            ExtractionResult = extraction,
+            ValidationResult = validation,
+            OcrConfidence = 0.90m,
+            StructuredExtractionConfidence = extraction.Confidence,
+            RequestedDocumentLanguage = DocumentLanguage.EnglishCanada,
+            DetectedDocumentLanguage = DocumentLanguage.EnglishCanada
+        });
+
+        Assert.InRange(score, 0.80m, 1.00m);
+    }
+
+    [Fact]
+    public void ConfidenceScoring_French_Receipt_High_When_Valid()
+    {
+        var service = new ConfidenceScoringService();
+        var extraction = new FinancialExtractionResult
+        {
+            VendorName = "Marchand",
+            DocumentDate = new DateTime(2026, 5, 31),
+            Subtotal = 80m,
+            Gst = 4m,
+            Qst = 7.98m,
+            Total = 91.98m,
+            Confidence = 0.80m
+        };
+        var validation = new FinancialDocumentValidator().Validate(extraction, DocumentType.Receipt);
+
+        var score = service.CalculateOverallConfidence(new ConfidenceScoringInput
+        {
+            DocumentType = DocumentType.Receipt,
+            ExtractionResult = extraction,
+            ValidationResult = validation,
+            OcrConfidence = 0.86m,
+            StructuredExtractionConfidence = extraction.Confidence,
+            RequestedDocumentLanguage = DocumentLanguage.FrenchCanada,
+            DetectedDocumentLanguage = DocumentLanguage.FrenchCanada
+        });
+
+        Assert.InRange(score, 0.78m, 1.00m);
+    }
+
+    [Fact]
+    public void ConfidenceScoring_Bilingual_Invoice_High_When_Complete_And_Valid()
+    {
+        var service = new ConfidenceScoringService();
+        var extraction = new FinancialExtractionResult
+        {
+            VendorName = "Bureau Example",
+            DocumentNumber = "FAC-123",
+            DocumentDate = new DateTime(2026, 5, 31),
+            DueDate = new DateTime(2026, 6, 30),
+            Subtotal = 200m,
+            Gst = 10m,
+            Qst = 19.95m,
+            Total = 229.95m,
+            Confidence = 0.82m
+        };
+        var validation = new FinancialDocumentValidator().Validate(extraction, DocumentType.Invoice);
+
+        var score = service.CalculateOverallConfidence(new ConfidenceScoringInput
+        {
+            DocumentType = DocumentType.Invoice,
+            ExtractionResult = extraction,
+            ValidationResult = validation,
+            OcrConfidence = 0.88m,
+            StructuredExtractionConfidence = extraction.Confidence,
+            RequestedDocumentLanguage = DocumentLanguage.BilingualCanada,
+            DetectedDocumentLanguage = DocumentLanguage.BilingualCanada
+        });
+
+        Assert.InRange(score, 0.76m, 1.00m);
+    }
+
+    [Fact]
+    public void ConfidenceScoring_Language_Mismatch_Reduces_Confidence()
+    {
+        var service = new ConfidenceScoringService();
+        var extraction = new FinancialExtractionResult
+        {
+            VendorName = "Store",
+            DocumentDate = new DateTime(2026, 5, 31),
+            Subtotal = 100m,
+            Gst = 5m,
+            Qst = 9.98m,
+            Total = 114.98m,
+            Confidence = 0.84m
+        };
+        var validation = new FinancialDocumentValidator().Validate(extraction, DocumentType.Receipt);
+
+        var matched = service.CalculateOverallConfidence(new ConfidenceScoringInput
+        {
+            DocumentType = DocumentType.Receipt,
+            ExtractionResult = extraction,
+            ValidationResult = validation,
+            OcrConfidence = 0.90m,
+            StructuredExtractionConfidence = extraction.Confidence,
+            RequestedDocumentLanguage = DocumentLanguage.EnglishCanada,
+            DetectedDocumentLanguage = DocumentLanguage.EnglishCanada
+        });
+
+        var mismatched = service.CalculateOverallConfidence(new ConfidenceScoringInput
+        {
+            DocumentType = DocumentType.Receipt,
+            ExtractionResult = extraction,
+            ValidationResult = validation,
+            OcrConfidence = 0.90m,
+            StructuredExtractionConfidence = extraction.Confidence,
+            RequestedDocumentLanguage = DocumentLanguage.EnglishCanada,
+            DetectedDocumentLanguage = DocumentLanguage.FrenchCanada
+        });
+
+        Assert.True(mismatched < matched);
+    }
+
+    [Fact]
+    public void ConfidenceScoring_Missing_Required_Fields_Is_Low()
+    {
+        var service = new ConfidenceScoringService();
+        var extraction = new FinancialExtractionResult
+        {
+            VendorName = "Unknown",
+            Confidence = 0.45m
+        };
+        var validation = new FinancialDocumentValidator().Validate(extraction, DocumentType.Receipt);
+
+        var score = service.CalculateOverallConfidence(new ConfidenceScoringInput
+        {
+            DocumentType = DocumentType.Receipt,
+            ExtractionResult = extraction,
+            ValidationResult = validation,
+            OcrConfidence = 0.55m,
+            StructuredExtractionConfidence = extraction.Confidence,
+            RequestedDocumentLanguage = DocumentLanguage.EnglishCanada,
+            DetectedDocumentLanguage = DocumentLanguage.EnglishCanada
+        });
+
+        Assert.InRange(score, 0m, 0.45m);
+    }
+
+    [Fact]
+    public void ConfidenceScoring_Tax_Mismatch_Is_Low()
+    {
+        var service = new ConfidenceScoringService();
+        var extraction = new FinancialExtractionResult
+        {
+            VendorName = "Store",
+            DocumentDate = new DateTime(2026, 5, 31),
+            Subtotal = 100m,
+            Gst = 5m,
+            Qst = 9.98m,
+            Total = 140m,
+            Confidence = 0.80m
+        };
+        var validation = new FinancialDocumentValidator().Validate(extraction, DocumentType.Receipt);
+
+        var score = service.CalculateOverallConfidence(new ConfidenceScoringInput
+        {
+            DocumentType = DocumentType.Receipt,
+            ExtractionResult = extraction,
+            ValidationResult = validation,
+            OcrConfidence = 0.84m,
+            StructuredExtractionConfidence = extraction.Confidence,
+            RequestedDocumentLanguage = DocumentLanguage.EnglishCanada,
+            DetectedDocumentLanguage = DocumentLanguage.EnglishCanada
+        });
+
+        Assert.InRange(score, 0m, 0.60m);
+    }
+
+    [Fact]
+    public void ConfidenceScoring_Low_Confidence_Primary_Recovered_By_Gemini_Fallback()
+    {
+        var service = new ConfidenceScoringService();
+        var extraction = new FinancialExtractionResult
+        {
+            VendorName = "Store",
+            DocumentDate = new DateTime(2026, 5, 31),
+            Subtotal = 100m,
+            Gst = 5m,
+            Qst = 9.98m,
+            Total = 114.98m,
+            Confidence = 0.82m
+        };
+        var validation = new FinancialDocumentValidator().Validate(extraction, DocumentType.Receipt);
+
+        var score = service.CalculateOverallConfidence(new ConfidenceScoringInput
+        {
+            DocumentType = DocumentType.Receipt,
+            ExtractionResult = extraction,
+            ValidationResult = validation,
+            OcrConfidence = 0.82m,
+            StructuredExtractionConfidence = extraction.Confidence,
+            RequestedDocumentLanguage = DocumentLanguage.EnglishCanada,
+            DetectedDocumentLanguage = DocumentLanguage.EnglishCanada,
+            FallbackNeeded = true,
+            FallbackUsed = true,
+            GeminiFlashLiteUsed = true,
+            GeminiUsedAfterLowConfidencePrimary = true
+        });
+
+        Assert.InRange(score, 0.78m, 1.00m);
+    }
+
+    [Fact]
+    public void ConfidenceScoring_Gemini_Fallback_With_Failed_Validation_Stays_Low()
+    {
+        var service = new ConfidenceScoringService();
+        var extraction = new FinancialExtractionResult
+        {
+            VendorName = "Store",
+            DocumentDate = new DateTime(2026, 5, 31),
+            Subtotal = 100m,
+            Gst = 5m,
+            Qst = 9.98m,
+            Total = 150m,
+            Confidence = 0.72m
+        };
+        var validation = new FinancialDocumentValidator().Validate(extraction, DocumentType.Receipt);
+
+        var score = service.CalculateOverallConfidence(new ConfidenceScoringInput
+        {
+            DocumentType = DocumentType.Receipt,
+            ExtractionResult = extraction,
+            ValidationResult = validation,
+            OcrConfidence = 0.72m,
+            StructuredExtractionConfidence = extraction.Confidence,
+            RequestedDocumentLanguage = DocumentLanguage.EnglishCanada,
+            DetectedDocumentLanguage = DocumentLanguage.EnglishCanada,
+            FallbackNeeded = true,
+            FallbackUsed = true,
+            GeminiFlashLiteUsed = true,
+            GeminiUsedAfterLowConfidencePrimary = true
+        });
+
+        Assert.InRange(score, 0m, 0.60m);
+    }
 }
