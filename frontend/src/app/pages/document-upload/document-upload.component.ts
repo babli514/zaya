@@ -1,8 +1,58 @@
+import { HttpErrorResponse, HttpEventType } from '@angular/common/http';
 import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterModule } from '@angular/router';
-import { DocumentService } from '../../services/document.service';
+import { DocumentService, UploadDocumentLanguage, UploadDocumentType } from '../../services/document.service';
+
+type UploadMode = 'uploadOnly' | 'uploadAndProcess';
+
+interface LabelOption<TValue extends string> {
+  value: TValue;
+  label: string;
+}
+
+const UPLOAD_LABELS = {
+  title: 'Upload Document',
+  fields: {
+    documentType: 'Document type',
+    documentLanguage: 'Document language',
+    selectFile: 'Select file',
+    processAfterUpload: 'Automatically process after upload'
+  },
+  buttons: {
+    chooseFile: 'Choose file',
+    uploadOnly: 'Upload only',
+    uploadAndProcess: 'Upload and process now',
+    cancel: 'Cancel'
+  },
+  file: {
+    noneSelected: 'No file selected',
+    invalidType: 'Unsupported file type. Allowed: PDF, PNG, JPG, JPEG, WEBP.',
+    tooLarge: 'File size exceeds the maximum allowed size of 10 MB.'
+  },
+  status: {
+    uploading: 'Uploading...',
+    processing: 'Processing document...',
+    uploadSuccess: 'Upload successful. Redirecting to document details...',
+    processSuccess: 'Document processed successfully. Redirecting to document details...'
+  },
+  validation: {
+    fileRequired: 'Please select a file before uploading.'
+  }
+} as const;
+
+const DOCUMENT_TYPE_OPTIONS: LabelOption<UploadDocumentType>[] = [
+  { value: 'receipt', label: 'Receipt' },
+  { value: 'invoice', label: 'Invoice' }
+];
+
+const DOCUMENT_LANGUAGE_OPTIONS: LabelOption<UploadDocumentLanguage>[] = [
+  { value: 'auto', label: 'Auto-detect' },
+  { value: 'en-CA', label: 'English Canada' },
+  { value: 'fr-CA', label: 'Français Canada' },
+  { value: 'bilingual-CA', label: 'Bilingual Canada' }
+];
 
 @Component({
   selector: 'app-document-upload',
@@ -11,57 +61,87 @@ import { DocumentService } from '../../services/document.service';
   template: `
     <div class="container">
       <div class="upload-section">
-        <h1>Upload Document</h1>
-        
+        <h1>{{ labels.title }}</h1>
+
         <div class="form-group">
-          <label>Document Type</label>
+          <label>{{ labels.fields.documentType }}</label>
           <select [(ngModel)]="documentType" class="form-control">
-            <option value="Receipt">Receipt</option>
-            <option value="Invoice">Invoice</option>
+            <option *ngFor="let option of documentTypeOptions" [value]="option.value">{{ option.label }}</option>
           </select>
         </div>
 
         <div class="form-group">
-          <label>Select File</label>
+          <label>{{ labels.fields.documentLanguage }}</label>
+          <select [(ngModel)]="documentLanguage" class="form-control">
+            <option *ngFor="let option of documentLanguageOptions" [value]="option.value">{{ option.label }}</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>{{ labels.fields.selectFile }}</label>
           <div class="file-input-wrapper">
-            <input 
-              type="file" 
-              #fileInput 
-              (change)="onFileSelected($event)" 
-              accept="image/*,.pdf"
+            <input
+              type="file"
+              #fileInput
+              (change)="onFileSelected($event)"
+              accept=".pdf,.png,.jpg,.jpeg,.webp"
               class="file-input"
             />
-            <button (click)="fileInput.click()" class="btn btn-secondary">
-              Choose File
+            <button type="button" (click)="fileInput.click()" class="btn btn-secondary">
+              {{ labels.buttons.chooseFile }}
             </button>
-            <span class="file-name">{{ selectedFileName || 'No file selected' }}</span>
+            <span class="file-name">{{ selectedFileDisplay || labels.file.noneSelected }}</span>
           </div>
+        </div>
+
+        <div class="form-group checkbox-row">
+          <label class="checkbox-label">
+            <input type="checkbox" [(ngModel)]="processAfterUpload" />
+            <span>{{ labels.fields.processAfterUpload }}</span>
+          </label>
         </div>
 
         <div *ngIf="error" class="alert alert-danger">
           {{ error }}
         </div>
 
-        <div *ngIf="uploading" class="uploading">
-          <div class="spinner"></div>
-          <p>Uploading...</p>
+        <div *ngIf="successMessage" class="alert alert-success">
+          {{ successMessage }}
         </div>
 
-        <button 
-          [disabled]="!selectedFile || uploading" 
-          (click)="uploadDocument()" 
-          class="btn btn-primary btn-lg"
-        >
-          {{ uploading ? 'Uploading...' : 'Upload' }}
-        </button>
+        <div *ngIf="uploading || processing" class="uploading">
+          <div class="spinner"></div>
+          <p>{{ processing ? labels.status.processing : labels.status.uploading }}</p>
+          <p *ngIf="uploading && uploadProgress > 0" class="progress">{{ uploadProgress }}%</p>
+        </div>
 
-        <a routerLink="/documents" class="btn btn-secondary btn-lg">Cancel</a>
+        <div class="button-row">
+          <button
+            type="button"
+            [disabled]="!selectedFile || uploading || processing"
+            (click)="submit('uploadOnly')"
+            class="btn btn-primary btn-lg"
+          >
+            {{ labels.buttons.uploadOnly }}
+          </button>
+
+          <button
+            type="button"
+            [disabled]="!selectedFile || uploading || processing"
+            (click)="submit('uploadAndProcess')"
+            class="btn btn-primary btn-lg"
+          >
+            {{ labels.buttons.uploadAndProcess }}
+          </button>
+
+          <a routerLink="/documents" class="btn btn-secondary btn-lg">{{ labels.buttons.cancel }}</a>
+        </div>
       </div>
     </div>
   `,
   styles: [`
     .container {
-      max-width: 600px;
+      max-width: 700px;
       margin: 0 auto;
       padding: 20px;
     }
@@ -87,7 +167,8 @@ import { DocumentService } from '../../services/document.service';
       font-weight: 500;
     }
 
-    .form-control, .btn {
+    .form-control,
+    .btn {
       padding: 10px 15px;
       border: 1px solid #ddd;
       border-radius: 4px;
@@ -117,6 +198,18 @@ import { DocumentService } from '../../services/document.service';
       white-space: nowrap;
     }
 
+    .checkbox-row {
+      margin-top: -4px;
+    }
+
+    .checkbox-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 0;
+      cursor: pointer;
+    }
+
     .btn {
       padding: 10px 20px;
       border: none;
@@ -125,6 +218,7 @@ import { DocumentService } from '../../services/document.service';
       font-weight: 500;
       text-decoration: none;
       display: inline-block;
+      text-align: center;
     }
 
     .btn-secondary {
@@ -139,8 +233,6 @@ import { DocumentService } from '../../services/document.service';
     .btn-primary {
       background-color: #007bff;
       color: white;
-      width: 100%;
-      margin-top: 10px;
     }
 
     .btn-primary:hover:not(:disabled) {
@@ -157,6 +249,14 @@ import { DocumentService } from '../../services/document.service';
       font-size: 16px;
     }
 
+    .button-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 10px;
+      align-items: center;
+      margin-top: 10px;
+    }
+
     .alert {
       padding: 15px;
       border-radius: 4px;
@@ -169,10 +269,21 @@ import { DocumentService } from '../../services/document.service';
       border: 1px solid #f5c6cb;
     }
 
+    .alert-success {
+      background-color: #d1e7dd;
+      color: #0f5132;
+      border: 1px solid #badbcc;
+    }
+
     .uploading {
       text-align: center;
       padding: 20px;
       margin-bottom: 20px;
+    }
+
+    .progress {
+      margin: 0;
+      font-weight: 600;
     }
 
     .spinner {
@@ -189,48 +300,194 @@ import { DocumentService } from '../../services/document.service';
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
     }
+
+    @media (max-width: 720px) {
+      .button-row {
+        grid-template-columns: 1fr;
+      }
+    }
   `]
 })
 export class DocumentUploadComponent {
+  readonly labels = UPLOAD_LABELS;
+  readonly documentTypeOptions = DOCUMENT_TYPE_OPTIONS;
+  readonly documentLanguageOptions = DOCUMENT_LANGUAGE_OPTIONS;
+
+  readonly maxFileSizeBytes = 10 * 1024 * 1024;
+  readonly allowedMimeTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
+  readonly allowedExtensions = ['pdf', 'png', 'jpg', 'jpeg', 'webp'];
+
   selectedFile: File | null = null;
-  selectedFileName = '';
-  documentType = 'Receipt';
+  selectedFileDisplay = '';
+  documentType: UploadDocumentType = 'receipt';
+  documentLanguage: UploadDocumentLanguage = 'auto';
+  processAfterUpload = false;
   uploading = false;
+  processing = false;
+  uploadProgress = 0;
   error = '';
+  successMessage = '';
 
   constructor(
-    private documentService: DocumentService,
-    private router: Router
+    private readonly documentService: DocumentService,
+    private readonly router: Router
   ) {}
 
-  onFileSelected(event: Event) {
+  onFileSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
-    if (input.files && input.files.length > 0) {
-      this.selectedFile = input.files[0];
-      this.selectedFileName = this.selectedFile.name;
-      this.error = '';
+    const file = input.files && input.files.length > 0 ? input.files[0] : null;
+
+    this.error = '';
+    this.successMessage = '';
+    this.selectedFile = null;
+    this.selectedFileDisplay = '';
+
+    if (!file) {
+      return;
     }
+
+    if (!this.isSupportedFileType(file)) {
+      this.error = this.labels.file.invalidType;
+      return;
+    }
+
+    if (file.size > this.maxFileSizeBytes) {
+      this.error = this.labels.file.tooLarge;
+      return;
+    }
+
+    this.selectedFile = file;
+    this.selectedFileDisplay = `${file.name} (${this.formatFileSize(file.size)})`;
   }
 
-  uploadDocument() {
+  submit(mode: UploadMode): void {
     if (!this.selectedFile) {
-      this.error = 'Please select a file';
+      this.error = this.labels.validation.fileRequired;
       return;
     }
 
     this.uploading = true;
+    this.processing = false;
+    this.uploadProgress = 0;
     this.error = '';
+    this.successMessage = '';
 
-    this.documentService.uploadDocument(this.selectedFile, this.documentType).subscribe({
-      next: (response) => {
+    this.documentService.uploadDocument(this.selectedFile, this.documentType, this.documentLanguage).subscribe({
+      next: (event) => {
+        if (event.type === HttpEventType.UploadProgress) {
+          if (event.total && event.total > 0) {
+            this.uploadProgress = Math.round((event.loaded / event.total) * 100);
+          }
+          return;
+        }
+
+        if (event.type !== HttpEventType.Response || !event.body) {
+          return;
+        }
+
         this.uploading = false;
-        this.router.navigate(['/documents', response.id]);
+
+        const uploadResponse = event.body;
+        const shouldProcess = mode === 'uploadAndProcess' || this.processAfterUpload;
+
+        if (!shouldProcess) {
+          this.successMessage = this.labels.status.uploadSuccess;
+          this.navigateToDocument(uploadResponse.documentId);
+          return;
+        }
+
+        this.processing = true;
+        this.documentService.processDocument(uploadResponse.documentId).subscribe({
+          next: () => {
+            this.processing = false;
+            this.successMessage = this.labels.status.processSuccess;
+            this.navigateToDocument(uploadResponse.documentId);
+          },
+          error: (err) => {
+            this.processing = false;
+            this.error = this.getBackendErrorMessage(err);
+          }
+        });
       },
       error: (err) => {
         this.uploading = false;
-        this.error = 'Failed to upload document: ' + (err.error?.message || err.message);
-        console.error('Upload error:', err);
+        this.processing = false;
+        this.error = this.getBackendErrorMessage(err);
       }
     });
+  }
+
+  private navigateToDocument(documentId: string): void {
+    setTimeout(() => {
+      this.router.navigate(['/documents', documentId]);
+    }, 700);
+  }
+
+  private isSupportedFileType(file: File): boolean {
+    const extension = this.getFileExtension(file.name);
+    const extensionAllowed = extension ? this.allowedExtensions.includes(extension) : false;
+
+    if (extensionAllowed) {
+      return true;
+    }
+
+    return this.allowedMimeTypes.includes(file.type);
+  }
+
+  private getFileExtension(fileName: string): string {
+    const lastDot = fileName.lastIndexOf('.');
+    if (lastDot < 0 || lastDot === fileName.length - 1) {
+      return '';
+    }
+
+    return fileName.slice(lastDot + 1).toLowerCase();
+  }
+
+  private formatFileSize(bytes: number): string {
+    if (bytes < 1024) {
+      return `${bytes} B`;
+    }
+
+    if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  }
+
+  private getBackendErrorMessage(error: unknown): string {
+    if (!(error instanceof HttpErrorResponse)) {
+      return 'Unexpected error while uploading the document.';
+    }
+
+    const payload = error.error;
+
+    if (typeof payload === 'string' && payload.trim().length > 0) {
+      return payload;
+    }
+
+    if (payload && typeof payload === 'object') {
+      const messageValue = (payload as { message?: unknown }).message;
+      if (typeof messageValue === 'string' && messageValue.trim().length > 0) {
+        return messageValue;
+      }
+
+      const errorsValue = (payload as { errors?: unknown }).errors;
+      if (errorsValue && typeof errorsValue === 'object') {
+        const flattened = Object.values(errorsValue as Record<string, unknown>)
+          .flatMap((entry) => Array.isArray(entry) ? entry : [entry])
+          .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
+
+        if (flattened.length > 0) {
+          return flattened.join(' ');
+        }
+      }
+    }
+
+    if (typeof error.message === 'string' && error.message.trim().length > 0) {
+      return error.message;
+    }
+
+    return 'Upload failed. Please verify the document and try again.';
   }
 }
