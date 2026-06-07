@@ -135,3 +135,32 @@ public class DocumentRawTextDto
 {
     public string RawText { get; set; } = string.Empty;
 }
+
+public class UpdateExtractedFieldsRequestDto
+{
+    public string? VendorName { get; set; }
+    public string? CustomerName { get; set; }
+    public string? DocumentNumber { get; set; }
+    public DateTime? DocumentDate { get; set; }
+    public DateTime? DueDate { get; set; }
+    public string? Currency { get; set; }
+    public decimal? Subtotal { get; set; }
+    public decimal? Gst { get; set; }
+    public decimal? Qst { get; set; }
+    public decimal? Hst { get; set; }
+    public decimal? Pst { get; set; }
+    public decimal? Tip { get; set; }
+    public decimal? Total { get; set; }
+    public DocumentLanguage? DetectedLanguage { get; set; }
+}
+
+public class ManualCorrectionDto
+{
+    public Guid Id { get; set; }
+    public Guid DocumentId { get; set; }
+    public string FieldName { get; set; } = string.Empty;
+    public string? OriginalValue { get; set; }
+    public string? CorrectedValue { get; set; }
+    public DateTime CorrectedAtUtc { get; set; }
+    public string? CorrectedBy { get; set; }
+}

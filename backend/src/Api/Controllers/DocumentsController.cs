@@ -193,6 +193,38 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    [HttpPut("{id:guid}/extracted-fields")]
+    [ProducesResponseType(typeof(DocumentResultDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<DocumentResultDto>> UpdateExtractedFields(Guid id, [FromBody] UpdateExtractedFieldsRequestDto requestDto, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await _documentService.UpdateExtractedFieldsAsync(id, requestDto, cancellationToken);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    [HttpGet("{id:guid}/corrections")]
+    [ProducesResponseType(typeof(IEnumerable<ManualCorrectionDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<IEnumerable<ManualCorrectionDto>>> GetCorrections(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var corrections = await _documentService.GetCorrectionsAsync(id, cancellationToken);
+            return Ok(corrections);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
     private static bool TryMapDocumentType(string value, out DocumentType documentType)
     {
         if (string.Equals(value, "receipt", StringComparison.OrdinalIgnoreCase))
