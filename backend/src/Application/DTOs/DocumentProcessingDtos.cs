@@ -66,10 +66,17 @@ public class FinancialExtractionInput
 public class FinancialExtractionResult
 {
     public string VendorName { get; set; } = string.Empty;
+    public string? CustomerName { get; set; }
+    public string? DocumentNumber { get; set; }
+    public DateTime? DocumentDate { get; set; }
+    public DateTime? DueDate { get; set; }
     public string Currency { get; set; } = "CAD";
     public decimal? Subtotal { get; set; }
     public decimal? Gst { get; set; }
     public decimal? Qst { get; set; }
+    public decimal? Hst { get; set; }
+    public decimal? Pst { get; set; }
+    public decimal? Tip { get; set; }
     public decimal? Total { get; set; }
     public decimal? Confidence { get; set; }
     public DocumentLanguage RequestedDocumentLanguage { get; set; }

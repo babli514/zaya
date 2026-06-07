@@ -5,7 +5,9 @@ using FinancialOCR.Domain.Entities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using Tesseract;
 using UglyToad.PdfPig;
 
@@ -479,19 +481,417 @@ public class LanguageDetectionService : ILanguageDetectionService
     }
 }
 
+public static class TextNormalizationHelper
+{
+    public static string NormalizeForMatching(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var formD = value.Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder(formD.Length);
+        foreach (var ch in formD)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark)
+            {
+                builder.Append(char.ToLowerInvariant(ch));
+            }
+        }
+
+        return Regex.Replace(builder.ToString().Normalize(NormalizationForm.FormC), "\\s+", " ").Trim();
+    }
+
+    public static IReadOnlyList<string> SplitLines(string rawText)
+    {
+        return rawText
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+}
+
+public static class CanadianTaxLabelNormalizer
+{
+    public static string NormalizeTaxLabel(string label)
+    {
+        var normalized = TextNormalizationHelper.NormalizeForMatching(label).Replace(".", string.Empty, StringComparison.Ordinal);
+        return normalized switch
+        {
+            "gst" or "tps" => "gst",
+            "qst" or "tvq" => "qst",
+            "hst" or "tvh" => "hst",
+            "pst" or "tvp" => "pst",
+            _ => normalized
+        };
+    }
+}
+
+public static class BilingualFinancialLabelPatterns
+{
+    public static readonly string[] SubtotalLabels = ["subtotal", "sub-total", "sous-total", "sous total"];
+    public static readonly string[] TotalLabels = ["total", "amount", "montant", "balance due", "solde du", "solde dû", "amount due", "montant du", "montant dû"];
+    public static readonly string[] GstLabels = ["gst", "g.s.t.", "tps", "t.p.s."];
+    public static readonly string[] QstLabels = ["qst", "q.s.t.", "tvq", "t.v.q."];
+    public static readonly string[] HstLabels = ["hst", "tvh"];
+    public static readonly string[] PstLabels = ["pst", "tvp"];
+    public static readonly string[] TipLabels = ["tip", "gratuity", "pourboire"];
+
+    public static readonly string[] InvoiceNumberEnglishLabels = ["invoice no", "invoice number", "invoice", "receipt", "ticket", "transaction"];
+    public static readonly string[] InvoiceNumberFrenchLabels = ["facture", "no de facture", "n° de facture", "numero de facture", "numéro de facture", "recu", "reçu", "ticket", "transaction"];
+    public static readonly string[] DateEnglishLabels = ["date", "due date"];
+    public static readonly string[] DateFrenchLabels = ["date", "date d'echeance", "date d’échéance", "date echeance", "echeance", "échéance"];
+    public static readonly string[] VendorEnglishLabels = ["vendor", "supplier", "merchant"];
+    public static readonly string[] VendorFrenchLabels = ["fournisseur", "marchand"];
+    public static readonly string[] CustomerEnglishLabels = ["customer"];
+    public static readonly string[] CustomerFrenchLabels = ["client"];
+
+    public static readonly string[] InvoiceNumberLabels = InvoiceNumberEnglishLabels.Concat(InvoiceNumberFrenchLabels).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    public static readonly string[] DateLabels = ["date"];
+    public static readonly string[] DueDateLabels = ["due date", "date d'echeance", "date d’échéance", "date echeance", "echeance", "échéance"];
+    public static readonly string[] VendorLabels = VendorEnglishLabels.Concat(VendorFrenchLabels).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    public static readonly string[] CustomerLabels = CustomerEnglishLabels.Concat(CustomerFrenchLabels).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    public static bool ContainsAnyLabel(string normalizedLine, IReadOnlyCollection<string> labels)
+    {
+        return labels.Any(label => normalizedLine.Contains(TextNormalizationHelper.NormalizeForMatching(label), StringComparison.Ordinal));
+    }
+}
+
+public static class MoneyParser
+{
+    private static readonly Regex AmountCandidateRegex = new(@"(?:(?:CAD|USD|EUR|C\$|\$)\s*)?-?\d{1,3}(?:[\s\u00A0,.]\d{3})*(?:[.,]\d{2})?\s*(?:\$)?|(?:(?:CAD|USD|EUR|C\$|\$)\s*)?-?\d+(?:[.,]\d{2})\s*(?:\$)?", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    public static bool TryParseAmount(string value, out decimal amount)
+    {
+        amount = 0m;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var containsCurrencySymbol = Regex.IsMatch(value, @"(?i)\b(CAD|USD|EUR)\b|C\$|\$");
+        var cleaned = Regex.Replace(value, @"(?i)\b(CAD|USD|EUR)\b|C\$|\$", string.Empty).Trim();
+        cleaned = cleaned.Replace("\u00A0", " ", StringComparison.Ordinal).Replace(" ", string.Empty, StringComparison.Ordinal);
+        cleaned = Regex.Replace(cleaned, @"[^0-9,\.\-]", string.Empty);
+        if (string.IsNullOrWhiteSpace(cleaned) || cleaned == "-")
+        {
+            return false;
+        }
+
+        var hasDecimalSeparator = cleaned.Contains(',') || cleaned.Contains('.');
+        if (!hasDecimalSeparator && !containsCurrencySymbol)
+        {
+            return false;
+        }
+
+        var normalized = NormalizeNumericSeparators(cleaned);
+        return decimal.TryParse(normalized, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out amount);
+    }
+
+    public static bool TryExtractAmountFromLine(string line, out decimal amount)
+    {
+        amount = 0m;
+        foreach (Match match in AmountCandidateRegex.Matches(line))
+        {
+            if (TryParseAmount(match.Value, out amount))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string NormalizeNumericSeparators(string value)
+    {
+        var lastComma = value.LastIndexOf(',');
+        var lastDot = value.LastIndexOf('.');
+
+        if (lastComma >= 0 && lastDot >= 0)
+        {
+            if (lastComma > lastDot)
+            {
+                return value.Replace(".", string.Empty, StringComparison.Ordinal).Replace(',', '.');
+            }
+
+            return value.Replace(",", string.Empty, StringComparison.Ordinal);
+        }
+
+        if (lastComma >= 0)
+        {
+            var decimals = value.Length - lastComma - 1;
+            return decimals == 2
+                ? value.Replace(',', '.')
+                : value.Replace(",", string.Empty, StringComparison.Ordinal);
+        }
+
+        if (lastDot >= 0)
+        {
+            var decimals = value.Length - lastDot - 1;
+            return decimals == 2
+                ? value
+                : value.Replace(".", string.Empty, StringComparison.Ordinal);
+        }
+
+        return value;
+    }
+}
+
+public static class DateParser
+{
+    private static readonly Dictionary<string, int> MonthLookup = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["january"] = 1, ["jan"] = 1,
+        ["february"] = 2, ["feb"] = 2,
+        ["march"] = 3, ["mar"] = 3,
+        ["april"] = 4, ["apr"] = 4,
+        ["may"] = 5,
+        ["june"] = 6, ["jun"] = 6,
+        ["july"] = 7, ["jul"] = 7,
+        ["august"] = 8, ["aug"] = 8,
+        ["september"] = 9, ["sep"] = 9,
+        ["october"] = 10, ["oct"] = 10,
+        ["november"] = 11, ["nov"] = 11,
+        ["december"] = 12, ["dec"] = 12,
+        ["janvier"] = 1,
+        ["fevrier"] = 2, ["février"] = 2,
+        ["mars"] = 3,
+        ["avril"] = 4,
+        ["mai"] = 5,
+        ["juin"] = 6,
+        ["juillet"] = 7,
+        ["aout"] = 8, ["août"] = 8,
+        ["septembre"] = 9,
+        ["octobre"] = 10,
+        ["novembre"] = 11,
+        ["decembre"] = 12, ["décembre"] = 12
+    };
+
+    private static readonly string[] NumericFormats = ["yyyy-MM-dd", "dd/MM/yyyy", "MM/dd/yyyy", "dd-MM-yyyy", "yyyy/MM/dd"];
+
+    public static bool TryParseDate(string rawValue, DocumentLanguage languagePreference, out DateTime date, out decimal confidence)
+    {
+        date = default;
+        confidence = 0m;
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return false;
+        }
+
+        var candidate = rawValue.Trim();
+        foreach (var format in NumericFormats)
+        {
+            if (DateTime.TryParseExact(candidate, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out date))
+            {
+                confidence = format == "MM/dd/yyyy" ? 0.55m : 0.8m;
+                if (format == "MM/dd/yyyy" && languagePreference == DocumentLanguage.EnglishCanada)
+                {
+                    confidence = 0.7m;
+                }
+
+                return true;
+            }
+        }
+
+        return TryParseMonthNameDate(candidate, out date, out confidence);
+    }
+
+    public static bool TryFindDateInLine(string line, DocumentLanguage languagePreference, out DateTime date, out decimal confidence)
+    {
+        date = default;
+        confidence = 0m;
+
+        var numericCandidates = Regex.Matches(line, @"\b\d{1,4}[/-]\d{1,2}[/-]\d{1,4}\b");
+        foreach (Match candidate in numericCandidates)
+        {
+            if (TryParseDate(candidate.Value, languagePreference, out date, out confidence))
+            {
+                return true;
+            }
+        }
+
+        var monthNameCandidate = Regex.Match(line, @"\b\d{1,2}\s+[A-Za-zÀ-ÿ]+\s+\d{4}\b|\b[A-Za-zÀ-ÿ]+\s+\d{1,2},?\s+\d{4}\b");
+        if (monthNameCandidate.Success)
+        {
+            return TryParseDate(monthNameCandidate.Value, languagePreference, out date, out confidence);
+        }
+
+        return false;
+    }
+
+    private static bool TryParseMonthNameDate(string value, out DateTime date, out decimal confidence)
+    {
+        date = default;
+        confidence = 0m;
+
+        var normalized = TextNormalizationHelper.NormalizeForMatching(value).Replace(",", string.Empty, StringComparison.Ordinal);
+        var dayFirst = Regex.Match(normalized, @"\b(\d{1,2})\s+([a-z]+)\s+(\d{4})\b");
+        if (dayFirst.Success)
+        {
+            var day = int.Parse(dayFirst.Groups[1].Value, CultureInfo.InvariantCulture);
+            var monthToken = dayFirst.Groups[2].Value;
+            var year = int.Parse(dayFirst.Groups[3].Value, CultureInfo.InvariantCulture);
+            if (MonthLookup.TryGetValue(monthToken, out var month) && DateTime.TryParseExact($"{year:D4}-{month:D2}-{day:D2}", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out date))
+            {
+                confidence = 0.9m;
+                return true;
+            }
+        }
+
+        var monthFirst = Regex.Match(normalized, @"\b([a-z]+)\s+(\d{1,2})\s+(\d{4})\b");
+        if (!monthFirst.Success)
+        {
+            return false;
+        }
+
+        var monthName = monthFirst.Groups[1].Value;
+        var dayOfMonth = int.Parse(monthFirst.Groups[2].Value, CultureInfo.InvariantCulture);
+        var y = int.Parse(monthFirst.Groups[3].Value, CultureInfo.InvariantCulture);
+        if (!MonthLookup.TryGetValue(monthName, out var m))
+        {
+            return false;
+        }
+
+        if (!DateTime.TryParseExact($"{y:D4}-{m:D2}-{dayOfMonth:D2}", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out date))
+        {
+            return false;
+        }
+
+        confidence = 0.9m;
+        return true;
+    }
+}
+
+public static class LanguageAwareFieldExtractor
+{
+    public static IReadOnlyList<string> PrioritizeLabels(DocumentLanguage requested, DocumentLanguage detected, IReadOnlyList<string> english, IReadOnlyList<string> french)
+    {
+        var language = ResolveLanguage(requested, detected);
+        if (language == DocumentLanguage.FrenchCanada)
+        {
+            return french.Concat(english).ToList();
+        }
+
+        if (language == DocumentLanguage.EnglishCanada)
+        {
+            return english.Concat(french).ToList();
+        }
+
+        return english.Concat(french).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    public static string? TryExtractTextAfterLabel(IReadOnlyList<string> lines, IReadOnlyCollection<string> labels)
+    {
+        foreach (var line in lines)
+        {
+            var normalized = TextNormalizationHelper.NormalizeForMatching(line);
+            foreach (var label in labels)
+            {
+                var normalizedLabel = TextNormalizationHelper.NormalizeForMatching(label);
+                if (!normalized.Contains(normalizedLabel, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var separatorIndex = line.IndexOf(':');
+                if (separatorIndex >= 0 && separatorIndex < line.Length - 1)
+                {
+                    var value = line[(separatorIndex + 1)..].Trim();
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        return value;
+                    }
+                }
+
+                var tokenized = line.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (tokenized.Length > 1)
+                {
+                    return string.Join(' ', tokenized.Skip(1));
+                }
+            }
+        }
+
+        return null;
+    }
+
+    public static decimal ComputeOverallConfidence(DocumentType documentType, FinancialExtractionResult result, decimal dateConfidence, bool languageMatched)
+    {
+        var score = 0.2m;
+        if (!string.IsNullOrWhiteSpace(result.VendorName) && !string.Equals(result.VendorName, "Unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 0.25m;
+        }
+
+        if (result.DocumentDate.HasValue)
+        {
+            score += 0.2m * Math.Max(0.5m, dateConfidence);
+        }
+
+        if (result.Total.HasValue)
+        {
+            score += 0.2m;
+        }
+
+        if (documentType == DocumentType.Invoice)
+        {
+            if (!string.IsNullOrWhiteSpace(result.DocumentNumber))
+            {
+                score += 0.1m;
+            }
+
+            if (result.Subtotal.HasValue || result.Gst.HasValue || result.Qst.HasValue || result.Hst.HasValue || result.Pst.HasValue)
+            {
+                score += 0.15m;
+            }
+        }
+
+        if (languageMatched)
+        {
+            score += 0.05m;
+        }
+
+        return Math.Min(1m, score);
+    }
+
+    private static DocumentLanguage ResolveLanguage(DocumentLanguage requested, DocumentLanguage detected)
+    {
+        if (requested != DocumentLanguage.Unknown)
+        {
+            return requested;
+        }
+
+        return detected;
+    }
+}
+
 public class FinancialFieldExtractor : IFinancialFieldExtractor
 {
     public Task<FinancialExtractionResult> ExtractAsync(FinancialExtractionInput input, CancellationToken cancellationToken)
     {
-        return Task.FromResult(new FinancialExtractionResult
+        cancellationToken.ThrowIfCancellationRequested();
+        var lines = TextNormalizationHelper.SplitLines(input.RawText);
+        var normalizedLines = lines.Select(TextNormalizationHelper.NormalizeForMatching).ToList();
+
+        var result = new FinancialExtractionResult
         {
-            VendorName = "Placeholder Vendor",
-            Currency = "CAD",
-            Subtotal = 100.00m,
-            Gst = 5.00m,
-            Qst = 9.98m,
-            Total = 114.98m,
-            Confidence = 0.80m,
+            VendorName = ExtractVendorName(lines, input.RequestedDocumentLanguage, input.DetectedLanguage),
+            CustomerName = LanguageAwareFieldExtractor.TryExtractTextAfterLabel(
+                lines,
+                LanguageAwareFieldExtractor.PrioritizeLabels(
+                    input.RequestedDocumentLanguage,
+                    input.DetectedLanguage,
+                    BilingualFinancialLabelPatterns.CustomerEnglishLabels,
+                    BilingualFinancialLabelPatterns.CustomerFrenchLabels)),
+            DocumentNumber = LanguageAwareFieldExtractor.TryExtractTextAfterLabel(
+                lines,
+                LanguageAwareFieldExtractor.PrioritizeLabels(
+                    input.RequestedDocumentLanguage,
+                    input.DetectedLanguage,
+                    BilingualFinancialLabelPatterns.InvoiceNumberEnglishLabels,
+                    BilingualFinancialLabelPatterns.InvoiceNumberFrenchLabels)),
+            Currency = DetectCurrency(input.RawText),
             RequestedDocumentLanguage = input.RequestedDocumentLanguage,
             DetectedLanguage = input.DetectedLanguage,
             PreferredVisionProvider = input.PreferredVisionProvider,
@@ -500,7 +900,187 @@ public class FinancialFieldExtractor : IFinancialFieldExtractor
             ModelName = input.ModelName,
             ProviderLatencyMs = input.ProviderLatencyMs,
             ProviderCostEstimate = input.ProviderCostEstimate
-        });
+        };
+
+        ExtractAmounts(lines, normalizedLines, result);
+        var dateConfidence = ExtractDates(lines, normalizedLines, input, result);
+        var languageMatched = LanguageMatchesLabels(normalizedLines, input.RequestedDocumentLanguage, input.DetectedLanguage);
+        result.Confidence = LanguageAwareFieldExtractor.ComputeOverallConfidence(input.DocumentType, result, dateConfidence, languageMatched);
+
+        return Task.FromResult(result);
+    }
+
+    private static string ExtractVendorName(IReadOnlyList<string> lines, DocumentLanguage requestedLanguage, DocumentLanguage detectedLanguage)
+    {
+        var prioritizedLabels = LanguageAwareFieldExtractor.PrioritizeLabels(
+            requestedLanguage,
+            detectedLanguage,
+            BilingualFinancialLabelPatterns.VendorEnglishLabels,
+            BilingualFinancialLabelPatterns.VendorFrenchLabels);
+        var labeled = LanguageAwareFieldExtractor.TryExtractTextAfterLabel(lines, prioritizedLabels);
+        if (!string.IsNullOrWhiteSpace(labeled))
+        {
+            return labeled;
+        }
+
+        foreach (var line in lines.Take(5))
+        {
+            if (line.Length > 2 && !MoneyParser.TryExtractAmountFromLine(line, out _))
+            {
+                return line.Trim();
+            }
+        }
+
+        return "Unknown";
+    }
+
+    private static string DetectCurrency(string rawText)
+    {
+        var normalized = TextNormalizationHelper.NormalizeForMatching(rawText);
+        if (normalized.Contains("usd", StringComparison.Ordinal) || normalized.Contains("us$", StringComparison.Ordinal))
+        {
+            return "USD";
+        }
+
+        if (normalized.Contains("eur", StringComparison.Ordinal))
+        {
+            return "EUR";
+        }
+
+        return "CAD";
+    }
+
+    private static void ExtractAmounts(IReadOnlyList<string> lines, IReadOnlyList<string> normalizedLines, FinancialExtractionResult result)
+    {
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var line = lines[i];
+            var normalized = normalizedLines[i];
+
+            if (!MoneyParser.TryExtractAmountFromLine(line, out var amount))
+            {
+                continue;
+            }
+
+            if (BilingualFinancialLabelPatterns.ContainsAnyLabel(normalized, BilingualFinancialLabelPatterns.SubtotalLabels) && !result.Subtotal.HasValue)
+            {
+                result.Subtotal = amount;
+                continue;
+            }
+
+            if (BilingualFinancialLabelPatterns.ContainsAnyLabel(normalized, BilingualFinancialLabelPatterns.TipLabels) && !result.Tip.HasValue)
+            {
+                result.Tip = amount;
+                continue;
+            }
+
+            if (TryExtractTaxAmount(normalized, amount, result))
+            {
+                continue;
+            }
+
+            if (BilingualFinancialLabelPatterns.ContainsAnyLabel(normalized, BilingualFinancialLabelPatterns.TotalLabels) && !result.Total.HasValue)
+            {
+                result.Total = amount;
+            }
+        }
+
+        if (!result.Total.HasValue)
+        {
+            var allAmounts = lines
+                .Select(line => MoneyParser.TryExtractAmountFromLine(line, out var value) ? value : (decimal?)null)
+                .Where(value => value.HasValue)
+                .Select(value => value!.Value)
+                .ToList();
+            if (allAmounts.Count > 0)
+            {
+                result.Total = allAmounts.Max();
+            }
+        }
+    }
+
+    private static bool TryExtractTaxAmount(string normalizedLine, decimal amount, FinancialExtractionResult result)
+    {
+        if (BilingualFinancialLabelPatterns.ContainsAnyLabel(normalizedLine, BilingualFinancialLabelPatterns.GstLabels) && !result.Gst.HasValue)
+        {
+            result.Gst = amount;
+            return true;
+        }
+
+        if (BilingualFinancialLabelPatterns.ContainsAnyLabel(normalizedLine, BilingualFinancialLabelPatterns.QstLabels) && !result.Qst.HasValue)
+        {
+            result.Qst = amount;
+            return true;
+        }
+
+        if (BilingualFinancialLabelPatterns.ContainsAnyLabel(normalizedLine, BilingualFinancialLabelPatterns.HstLabels) && !result.Hst.HasValue)
+        {
+            result.Hst = amount;
+            return true;
+        }
+
+        if (BilingualFinancialLabelPatterns.ContainsAnyLabel(normalizedLine, BilingualFinancialLabelPatterns.PstLabels) && !result.Pst.HasValue)
+        {
+            result.Pst = amount;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static decimal ExtractDates(IReadOnlyList<string> lines, IReadOnlyList<string> normalizedLines, FinancialExtractionInput input, FinancialExtractionResult result)
+    {
+        var dateConfidence = 0m;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var line = lines[i];
+            var normalized = normalizedLines[i];
+            if (!DateParser.TryFindDateInLine(line, input.DetectedLanguage == DocumentLanguage.Unknown ? input.RequestedDocumentLanguage : input.DetectedLanguage, out var parsedDate, out var confidence))
+            {
+                continue;
+            }
+
+            if (!result.DocumentDate.HasValue && BilingualFinancialLabelPatterns.ContainsAnyLabel(normalized, BilingualFinancialLabelPatterns.DateLabels))
+            {
+                result.DocumentDate = parsedDate;
+                dateConfidence = Math.Max(dateConfidence, confidence);
+                continue;
+            }
+
+            var dueLabels = LanguageAwareFieldExtractor.PrioritizeLabels(
+                input.RequestedDocumentLanguage,
+                input.DetectedLanguage,
+                ["due date"],
+                ["date d'echeance", "date d’échéance", "date echeance", "echeance", "échéance"]);
+            if (!result.DueDate.HasValue && BilingualFinancialLabelPatterns.ContainsAnyLabel(normalized, dueLabels))
+            {
+                result.DueDate = parsedDate;
+                dateConfidence = Math.Max(dateConfidence, confidence);
+                continue;
+            }
+
+            if (!result.DocumentDate.HasValue)
+            {
+                result.DocumentDate = parsedDate;
+                dateConfidence = Math.Max(dateConfidence, confidence * 0.85m);
+            }
+        }
+
+        return dateConfidence;
+    }
+
+    private static bool LanguageMatchesLabels(IReadOnlyList<string> normalizedLines, DocumentLanguage requestedLanguage, DocumentLanguage detectedLanguage)
+    {
+        var preferred = requestedLanguage != DocumentLanguage.Unknown ? requestedLanguage : detectedLanguage;
+        if (preferred == DocumentLanguage.Unknown || preferred == DocumentLanguage.BilingualCanada)
+        {
+            return false;
+        }
+
+        var frenchSignals = new[] { "sous-total", "montant", "facture", "recu", "reçu", "pourboire", "echeance", "échéance", "tvq", "tps" };
+        var englishSignals = new[] { "subtotal", "invoice", "receipt", "tip", "due date", "balance due", "amount due", "gst", "qst" };
+        var signalSet = preferred == DocumentLanguage.FrenchCanada ? frenchSignals : englishSignals;
+        return normalizedLines.Any(line => signalSet.Any(signal => line.Contains(TextNormalizationHelper.NormalizeForMatching(signal), StringComparison.Ordinal)));
     }
 }
 
@@ -512,14 +1092,14 @@ public class FinancialDocumentValidator : IFinancialDocumentValidator
 
         if (result.Subtotal.HasValue && result.Total.HasValue)
         {
-            var expected = (result.Subtotal ?? 0m) + (result.Gst ?? 0m) + (result.Qst ?? 0m);
+            var expected = (result.Subtotal ?? 0m) + (result.Gst ?? 0m) + (result.Qst ?? 0m) + (result.Hst ?? 0m) + (result.Pst ?? 0m) + (result.Tip ?? 0m);
             var delta = Math.Abs((result.Total ?? 0m) - expected);
             if (delta > 0.05m)
             {
                 warnings.Add(new ValidationWarning
                 {
                     Code = "TOTAL_MISMATCH",
-                    Message = "Total does not match Subtotal + GST/TPS + QST/TVQ within tolerance."
+                    Message = "Total does not match Subtotal + taxes + tip within tolerance."
                 });
             }
         }
