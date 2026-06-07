@@ -125,3 +125,9 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 
+# ===========================
+# Evaluation Artifacts
+# ===========================
+evaluation/evaluation-results.json
+evaluation/evaluation-summary.csv
+
