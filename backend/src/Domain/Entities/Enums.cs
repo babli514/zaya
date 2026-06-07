@@ -41,3 +41,10 @@ public enum OcrEngineType
     GeminiFlashLite,
     VisionFallback
 }
+
+public enum ValidationSeverity
+{
+    Info,
+    Warning,
+    Error
+}

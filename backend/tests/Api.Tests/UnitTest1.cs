@@ -103,4 +103,76 @@ public class FinancialExtractionParsersTests
         Assert.Equal(9.98m, result.Qst);
         Assert.Equal(114.98m, result.Total);
     }
+
+    [Fact]
+    public void FinancialValidator_Receipt_MissingSubtotal_WithTaxes_Warns_Only()
+    {
+        var validator = new FinancialDocumentValidator();
+        var result = validator.Validate(new FinancialExtractionResult
+        {
+            VendorName = "Store",
+            DocumentDate = new DateTime(2026, 6, 7),
+            Total = 10m,
+            Gst = 0.5m
+        }, DocumentType.Receipt);
+
+        Assert.True(result.IsValid);
+        Assert.Contains(result.Warnings, w => w.Code == "MissingSubtotal" && w.Severity == ValidationSeverity.Warning);
+    }
+
+    [Fact]
+    public void FinancialValidator_MissingTotal_Is_Error()
+    {
+        var validator = new FinancialDocumentValidator();
+        var result = validator.Validate(new FinancialExtractionResult
+        {
+            VendorName = "Vendor",
+            DocumentDate = new DateTime(2026, 6, 7)
+        }, DocumentType.Receipt);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Warnings, w => w.Code == "MissingTotal" && w.Severity == ValidationSeverity.Error);
+    }
+
+    [Fact]
+    public void FinancialValidator_Invoice_MissingInvoiceNumber_And_DueDate_Warns()
+    {
+        var validator = new FinancialDocumentValidator();
+        var result = validator.Validate(new FinancialExtractionResult
+        {
+            VendorName = "Vendor",
+            DocumentDate = new DateTime(2026, 6, 7),
+            Subtotal = 100m,
+            Gst = 5m,
+            Qst = 9.98m,
+            Total = 114.98m
+        }, DocumentType.Invoice);
+
+        Assert.True(result.IsValid);
+        Assert.Contains(result.Warnings, w => w.Code == "MissingInvoiceNumber" && w.Severity == ValidationSeverity.Warning);
+        Assert.Contains(result.Warnings, w => w.Code == "MissingDueDate" && w.Severity == ValidationSeverity.Warning);
+    }
+
+    [Fact]
+    public void FinancialValidator_Invoice_LineItems_Tax_Mismatch_Errors()
+    {
+        var validator = new FinancialDocumentValidator();
+        var result = validator.Validate(new FinancialExtractionResult
+        {
+            VendorName = "Vendor",
+            DocumentNumber = "INV-1",
+            DocumentDate = new DateTime(2026, 6, 7),
+            DueDate = new DateTime(2026, 7, 7),
+            Gst = 5m,
+            Total = 200m,
+            LineItems =
+            [
+                new FinancialExtractionLineItem { Description = "Item 1", Amount = 50m },
+                new FinancialExtractionLineItem { Description = "Item 2", Amount = 50m }
+            ]
+        }, DocumentType.Invoice);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Warnings, w => w.Code == "TaxTotalMismatch" && w.Severity == ValidationSeverity.Error);
+    }
 }

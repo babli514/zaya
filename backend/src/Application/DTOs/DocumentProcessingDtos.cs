@@ -63,6 +63,14 @@ public class FinancialExtractionInput
     public decimal? ProviderCostEstimate { get; set; }
 }
 
+public class FinancialExtractionLineItem
+{
+    public string Description { get; set; } = string.Empty;
+    public decimal? Quantity { get; set; }
+    public decimal? UnitPrice { get; set; }
+    public decimal? Amount { get; set; }
+}
+
 public class FinancialExtractionResult
 {
     public string VendorName { get; set; } = string.Empty;
@@ -77,7 +85,9 @@ public class FinancialExtractionResult
     public decimal? Hst { get; set; }
     public decimal? Pst { get; set; }
     public decimal? Tip { get; set; }
+    public decimal? Discount { get; set; }
     public decimal? Total { get; set; }
+    public List<FinancialExtractionLineItem> LineItems { get; set; } = new();
     public decimal? Confidence { get; set; }
     public DocumentLanguage RequestedDocumentLanguage { get; set; }
     public DocumentLanguage DetectedLanguage { get; set; }
@@ -92,12 +102,17 @@ public class FinancialExtractionResult
 public class ValidationWarning
 {
     public string Code { get; set; } = string.Empty;
-    public string Message { get; set; } = string.Empty;
+    public string MessageEn { get; set; } = string.Empty;
+    public string MessageFr { get; set; } = string.Empty;
+    public ValidationSeverity Severity { get; set; } = ValidationSeverity.Warning;
+    public string? FieldName { get; set; }
 }
 
 public class FinancialValidationResult
 {
     public bool IsValid { get; set; }
+    public decimal ConfidenceAdjustment { get; set; }
+    public string ValidationSummary { get; set; } = string.Empty;
     public List<ValidationWarning> Warnings { get; set; } = new();
     public DocumentLanguage RequestedDocumentLanguage { get; set; }
     public DocumentLanguage DetectedLanguage { get; set; }

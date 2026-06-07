@@ -130,9 +130,10 @@ public class DocumentProcessingService : IDocumentProcessingService
             }
 
             var allWarnings = BuildWarnings(processing.ValidationResult, processing.OcrResult);
+            var finalConfidence = ApplyConfidenceAdjustment(processing.ExtractionResult.Confidence, processing.ValidationResult.ConfidenceAdjustment);
             extractionJob.DetectedLanguage = processing.DetectedLanguage;
             extractionJob.RawText = processing.OcrResult.RawText;
-            extractionJob.OverallConfidence = processing.ExtractionResult.Confidence;
+            extractionJob.OverallConfidence = finalConfidence;
             extractionJob.WarningsJson = JsonSerializer.Serialize(allWarnings);
             extractionJob.Status = ExtractionJobStatus.Completed;
             extractionJob.CompletedAtUtc = DateTime.UtcNow;
@@ -155,18 +156,19 @@ public class DocumentProcessingService : IDocumentProcessingService
                 Pst = processing.ExtractionResult.Pst,
                 Tip = processing.ExtractionResult.Tip,
                 Total = processing.ExtractionResult.Total,
-                Confidence = processing.ExtractionResult.Confidence,
+                Confidence = finalConfidence,
                 DetectedLanguage = processing.DetectedLanguage,
                 IsValidated = processing.ValidationResult.IsValid,
-                ValidationSummary = processing.ValidationResult.Warnings.Count == 0
-                    ? "No validation warnings"
-                    : string.Join("; ", processing.ValidationResult.Warnings.Select(w => w.Message))
+                ValidationSummary = processing.ValidationResult.ValidationSummary
             };
 
             _dbContext.ExtractedFinancialDocuments.Add(extractedFinancialDocument);
 
             document.DocumentLanguage = processing.DetectedLanguage;
-            document.ProcessingStatus = processing.ValidationResult.IsValid ? ProcessingStatus.Completed : ProcessingStatus.NeedsReview;
+            var hasValidationIssues = processing.ValidationResult.Warnings.Any(w => w.Severity != ValidationSeverity.Info);
+            document.ProcessingStatus = processing.ValidationResult.IsValid && !hasValidationIssues && finalConfidence >= route.MinPrimaryOcrConfidence
+                ? ProcessingStatus.Completed
+                : ProcessingStatus.NeedsReview;
             document.ProcessedAtUtc = DateTime.UtcNow;
             document.FailureReason = null;
 
@@ -297,6 +299,27 @@ public class DocumentProcessingService : IDocumentProcessingService
         }
     }
 
+    private static decimal? ApplyConfidenceAdjustment(decimal? baseConfidence, decimal adjustment)
+    {
+        if (!baseConfidence.HasValue)
+        {
+            return null;
+        }
+
+        var adjusted = baseConfidence.Value + adjustment;
+        if (adjusted < 0m)
+        {
+            return 0m;
+        }
+
+        if (adjusted > 1m)
+        {
+            return 1m;
+        }
+
+        return adjusted;
+    }
+
     private static List<ValidationWarning> BuildWarnings(FinancialValidationResult validationResult, OcrResult ocrResult)
     {
         var allWarnings = new List<ValidationWarning>();
@@ -304,7 +327,9 @@ public class DocumentProcessingService : IDocumentProcessingService
         allWarnings.AddRange(ocrResult.Warnings.Select(w => new ValidationWarning
         {
             Code = "OCR_WARNING",
-            Message = w
+            MessageEn = w,
+            MessageFr = w,
+            Severity = ValidationSeverity.Warning
         }));
         return allWarnings;
     }
