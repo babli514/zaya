@@ -91,7 +91,9 @@ public class DocumentProcessingService : IDocumentProcessingService
 
     public async Task<DocumentDetailDto> ProcessDocumentAsync(Guid documentId, CancellationToken cancellationToken)
     {
-        var document = await _dbContext.Documents
+		_logger.LogWarning("START ProcessDocumentAsync for {DocumentId}", documentId);
+
+		var document = await _dbContext.Documents
             .FirstOrDefaultAsync(d => d.Id == documentId, cancellationToken);
 
         if (document == null)
@@ -220,9 +222,9 @@ public class DocumentProcessingService : IDocumentProcessingService
                 _dbContext.ExtractedFinancialDocuments.Add(extractedFinancialDocument);
             }
 
-            extractedFinancialDocument.VendorName = string.IsNullOrWhiteSpace(processing.ExtractionResult.VendorName) ? "Unknown" : processing.ExtractionResult.VendorName;
-            extractedFinancialDocument.CustomerName = processing.ExtractionResult.CustomerName;
-            extractedFinancialDocument.DocumentNumber = processing.ExtractionResult.DocumentNumber;
+            extractedFinancialDocument.VendorName = string.IsNullOrWhiteSpace(processing.ExtractionResult.VendorName) ? "Unknown" : Truncate(processing.ExtractionResult.VendorName, 10);
+            extractedFinancialDocument.CustomerName = Truncate(processing.ExtractionResult.CustomerName, 10);
+            extractedFinancialDocument.DocumentNumber = Truncate(processing.ExtractionResult.DocumentNumber, 10);
             extractedFinancialDocument.DocumentDate = processing.ExtractionResult.DocumentDate;
             extractedFinancialDocument.DueDate = processing.ExtractionResult.DueDate;
             extractedFinancialDocument.Currency = processing.ExtractionResult.Currency;
@@ -268,11 +270,15 @@ public class DocumentProcessingService : IDocumentProcessingService
             document.FailureReason = null;
 
             await _dbContext.SaveChangesAsync(cancellationToken);
-            return await _documentService.GetDocumentAsync(document.Id, cancellationToken);
+			_logger.LogWarning("END ProcessDocumentAsync for {DocumentId}", documentId);
+
+			return await _documentService.GetDocumentAsync(document.Id, cancellationToken);
         }
         catch (Exception ex)
         {
-            extractionJob.Status = ExtractionJobStatus.Failed;
+			_logger.LogError(ex, "EXCEPTION in ProcessDocumentAsync for {DocumentId}", documentId);
+
+			extractionJob.Status = ExtractionJobStatus.Failed;
             extractionJob.CompletedAtUtc = DateTime.UtcNow;
             extractionJob.ErrorMessage = ex.Message;
 
@@ -285,7 +291,17 @@ public class DocumentProcessingService : IDocumentProcessingService
         }
     }
 
-    private sealed class ProcessingAttempt
+	private static string Truncate(string? value, int maxLength)
+	{
+		if (string.IsNullOrWhiteSpace(value))
+			return string.Empty;
+
+		return value.Length <= maxLength
+			? value
+			: value.Substring(0, maxLength);
+	}
+
+	private sealed class ProcessingAttempt
     {
         public OcrResult OcrResult { get; set; } = new();
         public FinancialExtractionResult ExtractionResult { get; set; } = new();

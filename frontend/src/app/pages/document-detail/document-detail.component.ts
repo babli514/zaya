@@ -1,9 +1,11 @@
-import { Component, OnDestroy, OnInit } from '@angular/core';
+import { Component, NgZone, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, RouterModule } from '@angular/router';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
-import { Subscription, catchError, of, switchMap, timer, timeout } from 'rxjs';
+import { Subscription, catchError, of, switchMap, timer, timeout, distinctUntilChanged } from 'rxjs';
 import { DocumentDetailDto, DocumentResultDto, DocumentService, ValidationWarningDto } from '../../services/document.service';
+
+import { ChangeDetectorRef } from '@angular/core';
 
 type UiLanguage = 'en' | 'fr';
 
@@ -13,6 +15,10 @@ type UiLanguage = 'en' | 'fr';
   imports: [CommonModule, RouterModule],
   template: `
     <div class="container">
+      <h1 style="color:red">TEMPLATE VERSION A</h1>
+      <h1>DOCUMENT DETAIL DEBUG {{ document?.id }}</h1>
+      <p>loading = {{ loading }} | hasDocument = {{ !!document }} | hasResult = {{ !!result }}</p>
+
       <div *ngIf="loading" class="loading">Loading document details (route-check build)...</div>
 
       <div *ngIf="!loading && loadError" class="not-found">
@@ -24,9 +30,25 @@ type UiLanguage = 'en' | 'fr';
         <div class="detail-layout">
           <aside class="preview-panel">
             <h3>Document preview</h3>
-            <div class="preview-frame" *ngIf="isPdfPreview">
+            <!-- <div class="preview-frame" *ngIf="isPdfPreview">
               <iframe [src]="safePreviewUrl" title="Document preview" (error)="onPreviewError()"></iframe>
+            </div> -->
+            <div class="preview-frame" *ngIf="isPdfPreview && safePreviewUrl">
+              <iframe
+                [src]="safePreviewUrl"
+                title="Document preview">
+              </iframe>
             </div>
+
+            <div *ngIf="isPdfPreview && !safePreviewUrl && !previewFailed" class="loading-preview">
+              Loading preview…
+            </div>
+
+            <div *ngIf="previewFailed" class="preview-error">
+              Preview unavailable
+            </div>
+
+
             <div class="preview-frame" *ngIf="isImagePreview">
               <img [src]="previewUrl" [alt]="document.originalFileName" (error)="onPreviewError()" />
             </div>
@@ -568,6 +590,10 @@ type UiLanguage = 'en' | 'fr';
   `]
 })
 export class DocumentDetailComponent implements OnInit, OnDestroy {
+  private ts(label: string) {
+    console.log(`[${performance.now().toFixed(1)}] ${label}`);
+  }
+
   document: DocumentDetailDto | null = null;
   result: DocumentResultDto | null = null;
   loading = true;
@@ -594,11 +620,19 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
   private previewObjectUrl = '';
   private loadingWatchdog: ReturnType<typeof setTimeout> | null = null;
 
+  private _id = Math.random();
+
   constructor(
     private readonly documentService: DocumentService,
     private readonly route: ActivatedRoute,
-    private readonly sanitizer: DomSanitizer
-  ) {}
+    private readonly sanitizer: DomSanitizer,
+    private cdr: ChangeDetectorRef,
+    private zone: NgZone
+  ) {
+    console.log('[DocumentDetailComponent] ctor', this);
+    console.log('Inside Angular zone?', NgZone.isInAngularZone());
+    console.log('[ctor] instance id =', this._id);
+  }
 
   get isUploaded(): boolean {
     return this.document?.status === 'Uploaded';
@@ -616,15 +650,50 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     return this.result?.latestExtractionJob?.errorMessage || 'No failure details were provided by the backend.';
   }
 
+  // ngOnInit(): void {
+  //   console.log('[ngOnInit] start, instance id =', this._id);
+  //   this.routeSubscription = this.route.params.subscribe((params) => {
+  //     console.log('[route params]', params, 'instance id =', this._id);
+  //     const id = params['id'];
+  //     console.log('[route params] id =', id);
+  //     if (id) {
+  //       this.stopStatusPolling();
+  //       this.loadDocument(id);
+  //       return;
+  //     }
+
+  //     this.stopStatusPolling();
+  //     this.releasePreviewObjectUrl();
+  //     this.clearLoadingWatchdog();
+  //     this.loading = false;
+  //     this.document = null;
+  //     this.result = null;
+  //     this.engineBadges = [];
+  //     this.loadError = 'Document id is missing from the route.';
+  //   });
+  // }
+
   ngOnInit(): void {
-    this.routeSubscription = this.route.params.subscribe((params) => {
-      const id = params['id'];
+    console.log('[ngOnInit] start, instance id =', this._id);
+
+  console.log('[ngOnInit] start, instance id =', this._id);
+
+  // Prevent duplicate emissions when Angular re-evaluates the route tree
+  this.routeSubscription = this.route.paramMap
+    .pipe(
+      distinctUntilChanged((prev, curr) => prev.get('id') === curr.get('id'))
+    )
+    .subscribe((params) => {
+      const id = params.get('id');
+      console.log('[route params] id =', id, 'instance id =', this._id);
+
       if (id) {
         this.stopStatusPolling();
         this.loadDocument(id);
         return;
       }
 
+      // Handle missing ID
       this.stopStatusPolling();
       this.releasePreviewObjectUrl();
       this.clearLoadingWatchdog();
@@ -636,27 +705,122 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     });
   }
 
+
+  ngAfterViewChecked(): void {
+    console.log(
+      '[AfterViewChecked] loading =',
+      this.loading,
+      'hasDocument =',
+      !!this.document,
+      'hasResult =',
+      !!this.result
+    );
+  }
+
+
   ngOnDestroy(): void {
+    console.log('[DocumentDetailComponent] ngOnDestroy', this);
     this.routeSubscription?.unsubscribe();
     this.stopStatusPolling();
     this.releasePreviewObjectUrl();
     this.clearLoadingWatchdog();
   }
 
-  loadDocument(id: string): void {
-    this.stopStatusPolling();
-    this.releasePreviewObjectUrl();
-    this.clearLoadingWatchdog();
-    this.loadingWatchdog = setTimeout(() => {
-      if (!this.loading) {
-        return;
-      }
+  // loadDocument(id: string): void {
+  //   this.stopStatusPolling();
+  //   this.releasePreviewObjectUrl();
+  //   this.clearLoadingWatchdog();
+  //   this.loadingWatchdog = setTimeout(() => {
+  //     if (!this.loading) {
+  //       return;
+  //     }
 
-      this.loading = false;
-      if (!this.document && !this.result && !this.loadError) {
-        this.loadError = 'Document is taking longer than expected to load. Please refresh and try again.';
-      }
-    }, 20000);
+  //     this.loading = false;
+  //     if (!this.document && !this.result && !this.loadError) {
+  //       this.loadError = 'Document is taking longer than expected to load. Please refresh and try again.';
+  //     }
+  //   }, 20000);
+  //   this.loading = true;
+  //   this.loadError = '';
+  //   this.actionError = '';
+  //   this.rawTextVisible = false;
+  //   this.rawText = '';
+  //   this.previewUrl = '';
+  //   this.safePreviewUrl = null;
+  //   this.isPdfPreview = false;
+  //   this.isImagePreview = false;
+  //   this.previewFailed = false;
+
+  //   let documentResolved = false;
+  //   let completedCalls = 0;
+
+  //   const finalizeCall = () => {
+  //     completedCalls += 1;
+  //     if (completedCalls < 2) {
+  //       return;
+  //     }
+
+  //     if (!documentResolved) {
+  //       this.document = null;
+  //       this.result = null;
+  //       this.engineBadges = [];
+  //       this.loadError = 'Document not found or could not be loaded.';
+  //     }
+
+  //     this.loading = false;
+  //     this.clearLoadingWatchdog();
+  //   };
+
+
+  //   this.documentService.getDocument(id).pipe(timeout(15000), catchError(() => of(null))).subscribe({
+  //     next: (document) => {
+  //       try {
+  //         if (document) {
+  //           this.applyDocumentState(document);
+  //           documentResolved = true;
+  //         }
+  //       } catch (err) {
+  //         this.loadError = this.getErrorMessage(err);
+  //       } finally {
+  //         finalizeCall();
+  //       }
+  //     },
+  //     error: () => {
+  //       finalizeCall();
+  //     }
+  //   });
+
+  //   this.documentService.getDocumentResult(id).pipe(timeout(15000), catchError(() => of(null))).subscribe({
+  //     next: (result) => {
+  //       try {
+  //         const normalizedResult = this.normalizeResult(result);
+  //         this.result = normalizedResult;
+  //         this.engineBadges = this.buildEngineBadges(normalizedResult);
+
+  //         if (!documentResolved && normalizedResult?.document) {
+  //           this.applyDocumentState(this.toDetailFromResult(normalizedResult));
+  //           documentResolved = true;
+  //         }
+  //       } catch (err) {
+  //         this.loadError = this.getErrorMessage(err);
+  //       } finally {
+  //         finalizeCall();
+  //       }
+  //     },
+  //     error: () => {
+  //       this.result = null;
+  //       this.engineBadges = [];
+  //       finalizeCall();
+  //     }
+  //   });
+  // }
+
+  loadDocument(id: string): void {
+    const instanceId = this._id;
+    console.log('[DOC] START loadDocument, instance id =', this._id);
+    console.log('[loadDocument] START id =', id, 'instance id =', this._id);
+
+    // 1. RESET STATE FIRST
     this.loading = true;
     this.loadError = '';
     this.actionError = '';
@@ -668,14 +832,26 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     this.isImagePreview = false;
     this.previewFailed = false;
 
+    this.stopStatusPolling();
+    this.releasePreviewObjectUrl();
+    this.clearLoadingWatchdog();
+
+    // 2. WATCHDOG
+    // this.loadingWatchdog = setTimeout(() => {
+    //   if (!this.loading) return;
+    //   this.loading = false;
+    //   if (!this.document && !this.result && !this.loadError) {
+    //     this.loadError = 'Document is taking longer than expected to load.';
+    //   }
+    // }, 20000);
+
+    // 3. REAL HTTP CALLS
     let documentResolved = false;
     let completedCalls = 0;
 
     const finalizeCall = () => {
-      completedCalls += 1;
-      if (completedCalls < 2) {
-        return;
-      }
+      completedCalls++;
+      if (completedCalls < 2) return;
 
       if (!documentResolved) {
         this.document = null;
@@ -686,51 +862,100 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
 
       this.loading = false;
       this.clearLoadingWatchdog();
+
+      this.zone.run(() => {
+        this.loading = false;
+        this.cdr.detectChanges();
+      });
     };
 
-
-    this.documentService.getDocument(id).pipe(timeout(15000), catchError(() => of(null))).subscribe({
+    this.documentService.getDocument(id).pipe(
+      timeout(15000),
+      catchError((err) => {
+        console.error('[getDocument] error in pipe', err);
+        return of(null);
+      })
+    ).subscribe({
       next: (document) => {
+        this.ts(`[DOC] DONE getDocument(${document?.id}) instance=${this._id}`);
+
+        if (this._id !== instanceId) {
+          console.warn('[STALE INSTANCE IGNORED] instance =', this._id, 'expected =', instanceId);
+          return;
+        }
+        console.log('[getDocument] next', document, 'instance id =', this._id);
         try {
           if (document) {
+            this.previewUrl = '';
+            this.safePreviewUrl = null;
+            this.previewFailed = false;
+
             this.applyDocumentState(document);
             documentResolved = true;
+            console.log('[getDocument] applyDocumentState OK, documentResolved = true');
+          } else {
+            console.log('[getDocument] document is null');
           }
         } catch (err) {
+          console.error('[getDocument] exception in next handler', err);
           this.loadError = this.getErrorMessage(err);
-        } finally {
-          finalizeCall();
         }
       },
-      error: () => {
+      error: (err) => {
+        console.error('[getDocument] subscribe error', err);
+      },
+      complete: () => {
         finalizeCall();
       }
     });
 
-    this.documentService.getDocumentResult(id).pipe(timeout(15000), catchError(() => of(null))).subscribe({
+    this.documentService.getDocumentResult(id).pipe(
+      timeout(15000),
+      catchError((err) => {
+        console.error('[getDocumentResult] error in pipe', err);
+        return of(null);
+      })
+    ).subscribe({
       next: (result) => {
+        this.ts(`[DOC] DONE getDocumentResult(${result?.document.id}) instance=${this._id}`);
+
+        if (this._id !== instanceId) {
+          console.warn('[STALE INSTANCE IGNORED] instance =', this._id, 'expected =', instanceId);
+          return;
+        }
+        console.log('[getDocumentResult] next', result, 'instance id =', this._id);
         try {
           const normalizedResult = this.normalizeResult(result);
           this.result = normalizedResult;
           this.engineBadges = this.buildEngineBadges(normalizedResult);
 
           if (!documentResolved && normalizedResult?.document) {
+            console.log('[getDocumentResult] using fallback document from result');
+            this.previewUrl = '';
+            this.safePreviewUrl = null;
+            this.previewFailed = false;
             this.applyDocumentState(this.toDetailFromResult(normalizedResult));
             documentResolved = true;
           }
         } catch (err) {
+          console.error('[getDocumentResult] exception in next handler', err);
           this.loadError = this.getErrorMessage(err);
-        } finally {
-          finalizeCall();
-        }
+        } 
       },
-      error: () => {
+      error: (err) => {
+        console.error('[getDocumentResult] subscribe error', err);
         this.result = null;
         this.engineBadges = [];
+        finalizeCall();
+      },
+      complete: () => {
         finalizeCall();
       }
     });
   }
+
+
+
 
   processDocument(): void {
     if (!this.document) {
@@ -750,6 +975,7 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
         this.actionLoading = false;
         this.document = response;
         this.startStatusPolling(documentId);
+        //this.pollResult(documentId);
       },
       error: (err) => {
         this.actionLoading = false;
@@ -760,6 +986,53 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
       }
     });
   }
+
+  private pollAttempts = 0;
+
+  private pollResult(id: string): void {
+    this.pollAttempts++;
+
+    if (this.pollAttempts > 60) { // 60 attempts = ~90 seconds
+      this.loading = false;
+      this.loadError = 'Document processing timed out.';
+      return;
+    }
+
+    this.documentService.getDocumentResult(id).subscribe({
+      next: (result) => {
+        const job = result?.latestExtractionJob;
+
+        if (job?.status === 'Completed') {
+          console.log('POLL: Completed detected');
+          console.log('RAW RESULT:', result);
+
+          const normalized = this.normalizeResult(result);
+          console.log('NORMALIZED RESULT:', normalized);
+
+          this.zone.run(() => {
+            this.result = normalized;
+            this.loading = false;
+          });
+
+          console.log('FINAL RESULT:', this.result);
+          return;
+        }
+
+        if (job?.status === 'Failed') {
+          this.loading = false;
+          this.loadError = job.errorMessage || 'Extraction failed.';
+          return;
+        }
+
+        setTimeout(() => this.pollResult(id), 1500);
+      },
+      error: () => {
+        this.loading = false;
+        this.loadError = 'Failed to load extraction result.';
+      }
+    });
+  }
+
 
   toggleRawText(): void {
     if (!this.document) {
@@ -891,23 +1164,73 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     return map[status] ?? 'badge-unknown';
   }
 
+  // private startStatusPolling(documentId: string): void {
+  //   this.stopStatusPolling();
+  //   this.polling = true;
+  //   this.processingProgressMessage = 'Checking processing status every 2 seconds...';
+
+  //   this.statusPollingSubscription = timer(0, 2000).pipe(
+  //     switchMap(() => this.documentService.getDocument(documentId))
+  //   ).subscribe({
+  //     next: (document) => {
+  //       this.document = document;
+
+  //       if (document.status === 'Completed' || document.status === 'NeedsReview' || document.status === 'Failed') {
+  //         this.stopStatusPolling();
+  //         this.processingProgressMessage = '';
+
+  //         this.documentService.getDocumentResult(documentId).pipe(catchError(() => of(null))).subscribe({
+  //           next: (result) => {
+  //             const normalizedResult = this.normalizeResult(result);
+  //             this.result = normalizedResult;
+  //             this.engineBadges = this.buildEngineBadges(normalizedResult);
+  //             if (document.status === 'Failed') {
+  //               this.actionError = this.failureReason;
+  //             }
+  //           },
+  //           error: () => {
+  //             if (document.status === 'Failed') {
+  //               this.actionError = this.failureReason;
+  //             }
+  //           }
+  //         });
+  //       }
+  //     },
+  //     error: (err) => {
+  //       this.stopStatusPolling();
+  //       this.processingProgressMessage = '';
+  //       this.actionError = this.getErrorMessage(err);
+  //     }
+  //   });
+  // }
+
   private startStatusPolling(documentId: string): void {
+    console.log('[startStatusPolling] start, documentId =', documentId);
     this.stopStatusPolling();
     this.polling = true;
     this.processingProgressMessage = 'Checking processing status every 2 seconds...';
 
     this.statusPollingSubscription = timer(0, 2000).pipe(
-      switchMap(() => this.documentService.getDocument(documentId))
+      switchMap(() => {
+        console.log('[startStatusPolling] tick, fetching document');
+        return this.documentService.getDocument(documentId);
+      })
     ).subscribe({
       next: (document) => {
+        console.log('[startStatusPolling] document =', document);
         this.document = document;
 
         if (document.status === 'Completed' || document.status === 'NeedsReview' || document.status === 'Failed') {
+          console.log('[startStatusPolling] terminal status =', document.status);
           this.stopStatusPolling();
           this.processingProgressMessage = '';
 
-          this.documentService.getDocumentResult(documentId).pipe(catchError(() => of(null))).subscribe({
+          this.documentService.getDocumentResult(documentId).pipe(catchError((err) => {
+            console.error('[startStatusPolling] getDocumentResult error in pipe', err);
+            return of(null);
+          })).subscribe({
             next: (result) => {
+              console.log('[startStatusPolling] result =', result);
               const normalizedResult = this.normalizeResult(result);
               this.result = normalizedResult;
               this.engineBadges = this.buildEngineBadges(normalizedResult);
@@ -915,7 +1238,8 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
                 this.actionError = this.failureReason;
               }
             },
-            error: () => {
+            error: (err) => {
+              console.error('[startStatusPolling] getDocumentResult subscribe error', err);
               if (document.status === 'Failed') {
                 this.actionError = this.failureReason;
               }
@@ -924,6 +1248,7 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
         }
       },
       error: (err) => {
+        console.error('[startStatusPolling] subscribe error', err);
         this.stopStatusPolling();
         this.processingProgressMessage = '';
         this.actionError = this.getErrorMessage(err);
@@ -931,25 +1256,82 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     });
   }
 
+
   private stopStatusPolling(): void {
     this.statusPollingSubscription?.unsubscribe();
     this.statusPollingSubscription = null;
     this.polling = false;
   }
 
+  // private applyDocumentState(document: DocumentDetailDto): void {
+  //   this.document = document;
+  //   this.jsonExportUrl = this.documentService.getJsonExportUrl(document.id);
+  //   this.csvExportUrl = this.documentService.getCsvExportUrl(document.id);
+  //   const apiPreviewUrl = this.documentService.getDocumentFileUrl(document.id);
+  //   this.previewUrl = apiPreviewUrl;
+  //   this.safePreviewUrl = this.sanitizer.bypassSecurityTrustResourceUrl(apiPreviewUrl);
+  //   const contentType = (document.contentType || '').toLowerCase();
+  //   this.isPdfPreview = contentType.includes('application/pdf');
+  //   this.isImagePreview = contentType.startsWith('image/');
+  //   this.previewFailed = false;
+  //   this.loadPreviewFile(document.id);
+  // }
+
+  // private applyDocumentState(document: DocumentDetailDto): void {
+  //   // console.log('[applyDocumentState] document =', document);
+
+  //   const instanceId = this._id;
+  //   if (this._id !== instanceId) {
+  //     console.warn('[STALE applyDocumentState IGNORED]');
+  //     return;
+  //   }
+
+
+  //   this.document = document;
+  //   this.jsonExportUrl = this.documentService.getJsonExportUrl(document.id);
+  //   this.csvExportUrl = this.documentService.getCsvExportUrl(document.id);
+
+  //   const apiPreviewUrl = this.documentService.getDocumentFileUrl(document.id);
+
+  //   this.ts(`[PREVIEW] applyDocumentState: setting previewUrl=${apiPreviewUrl} for doc=${document.id} instance=${this._id}`);
+
+  //   // console.log('[applyDocumentState] apiPreviewUrl =', apiPreviewUrl);
+
+  //   this.previewUrl = apiPreviewUrl;
+  //   //this.safePreviewUrl = this.sanitizer.bypassSecurityTrustResourceUrl(apiPreviewUrl);
+  //   this.zone.run(() => {
+  //     this.safePreviewUrl = this.sanitizer.bypassSecurityTrustResourceUrl(apiPreviewUrl);
+  //     this.cdr.detectChanges();
+  //   });
+
+
+  //   const contentType = (document.contentType || '').toLowerCase();
+  //   //console.log('[applyDocumentState] contentType =', contentType);
+
+  //   this.isPdfPreview = contentType.includes('application/pdf');
+  //   this.isImagePreview = contentType.startsWith('image/');
+  //   this.previewFailed = false;
+
+  //   // console.log('[applyDocumentState] isPdfPreview =', this.isPdfPreview, 'isImagePreview =', this.isImagePreview);
+
+  //   this.loadPreviewFile(document.id);
+  // }
+
   private applyDocumentState(document: DocumentDetailDto): void {
     this.document = document;
-    this.jsonExportUrl = this.documentService.getJsonExportUrl(document.id);
-    this.csvExportUrl = this.documentService.getCsvExportUrl(document.id);
-    const apiPreviewUrl = this.documentService.getDocumentFileUrl(document.id);
-    this.previewUrl = apiPreviewUrl;
-    this.safePreviewUrl = this.sanitizer.bypassSecurityTrustResourceUrl(apiPreviewUrl);
+
+    // Do NOT set previewUrl or safePreviewUrl here.
+    // Leave them untouched until loadPreviewFile() finishes.
+
     const contentType = (document.contentType || '').toLowerCase();
     this.isPdfPreview = contentType.includes('application/pdf');
     this.isImagePreview = contentType.startsWith('image/');
     this.previewFailed = false;
+
     this.loadPreviewFile(document.id);
   }
+
+
 
   private clearLoadingWatchdog(): void {
     if (this.loadingWatchdog) {
@@ -958,20 +1340,106 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     }
   }
 
+  // private loadPreviewFile(documentId: string): void {
+  //   this.previewFileSubscription?.unsubscribe();
+  //   this.previewFileSubscription = this.documentService.getDocumentFile(documentId).subscribe({
+  //     next: (blob) => {
+  //       this.releasePreviewObjectUrl();
+  //       this.previewObjectUrl = URL.createObjectURL(blob);
+  //       this.previewUrl = this.previewObjectUrl;
+  //       this.safePreviewUrl = this.sanitizer.bypassSecurityTrustResourceUrl(this.previewObjectUrl);
+  //     },
+  //     error: () => {
+  //       this.releasePreviewObjectUrl();
+  //     }
+  //   });
+  // }
+
+  // private loadPreviewFile(documentId: string): void {
+  //   //console.log('[loadPreviewFile] start, documentId =', documentId);
+  //   const instanceId = this._id;
+  //   this.previewFileSubscription?.unsubscribe();
+  //   this.previewFileSubscription = this.documentService.getDocumentFile(documentId).subscribe({
+  //     next: (blob) => {
+  //       if (this._id !== instanceId) {
+  //         console.warn('[STALE PREVIEW IGNORED]');
+  //         return;
+  //       }
+  //       // console.log('[loadPreviewFile] next, blob size =', blob?.size, 'type =', (blob as any)?.type);
+  //       try {
+  //         this.releasePreviewObjectUrl();
+  //         if (!blob || blob.size === 0) {
+  //           //console.warn('[loadPreviewFile] empty blob, marking previewFailed');
+  //           this.previewFailed = true;
+  //           return;
+  //         }
+  //         this.previewObjectUrl = URL.createObjectURL(blob);
+  //         this.previewUrl = this.previewObjectUrl;
+  //         this.safePreviewUrl = this.sanitizer.bypassSecurityTrustResourceUrl(this.previewObjectUrl);
+  //         // console.log('[loadPreviewFile] previewObjectUrl =', this.previewObjectUrl);
+  //       } catch (e) {
+  //         //console.error('[loadPreviewFile] exception creating object URL', e);
+  //         this.previewFailed = true;
+  //       }
+  //     },
+  //     error: (err) => {
+  //       // console.error('[loadPreviewFile] error', err);
+  //       this.previewFailed = true;
+  //       this.releasePreviewObjectUrl();
+  //     }
+  //   });
+  // }
+
   private loadPreviewFile(documentId: string): void {
+    this.ts(`[PREVIEW] START loadPreviewFile(${documentId}) instance=${this._id}`);
+
+    const instanceId = this._id;
+    console.log('[loadPreviewFile] START for', documentId, 'instance =', instanceId);
+    if (!documentId || documentId !== this.document?.id) {
+      console.warn('[IGNORED PREVIEW] wrong documentId', documentId, 'expected', this.document?.id);
+      return;
+    }
+  
     this.previewFileSubscription?.unsubscribe();
-    this.previewFileSubscription = this.documentService.getDocumentFile(documentId).subscribe({
-      next: (blob) => {
-        this.releasePreviewObjectUrl();
-        this.previewObjectUrl = URL.createObjectURL(blob);
-        this.previewUrl = this.previewObjectUrl;
-        this.safePreviewUrl = this.sanitizer.bypassSecurityTrustResourceUrl(this.previewObjectUrl);
-      },
-      error: () => {
-        this.releasePreviewObjectUrl();
-      }
-    });
+
+    this.previewFileSubscription = this.documentService.getDocumentFile(documentId)
+      .subscribe({
+        next: (blob) => {
+          this.ts(`[PREVIEW] DONE loadPreviewFile(${documentId}) instance=${this._id}`);
+
+          if (this._id !== instanceId) {
+            console.warn('[STALE PREVIEW IGNORED] instance =', this._id, 'expected =', instanceId);
+            return;
+          }
+
+          if (!blob || blob.size === 0) {
+              //console.warn('[loadPreviewFile] empty blob, marking previewFailed');
+              this.previewFailed = true;
+              return;
+          }
+          const url = URL.createObjectURL(blob);
+          this.previewUrl = url;
+          this.zone.run(() => {
+            this.safePreviewUrl = this.sanitizer.bypassSecurityTrustResourceUrl(url);
+            this.previewFailed = false;
+            this.cdr.detectChanges();
+          });
+
+
+          console.log('[loadPreviewFile] preview loaded OK for', documentId);
+        },
+        error: (err) => {
+          if (this._id !== instanceId) {
+            console.warn('[STALE PREVIEW ERROR IGNORED]');
+            return;
+          }
+
+          console.error('[loadPreviewFile] error', err);
+          this.previewFailed = true;
+        }
+      });
   }
+
 
   private releasePreviewObjectUrl(): void {
     this.previewFileSubscription?.unsubscribe();

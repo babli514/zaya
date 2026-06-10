@@ -1,6 +1,6 @@
 import { HttpClient, HttpEvent } from '@angular/common/http';
 import { Injectable } from '@angular/core';
-import { Observable } from 'rxjs';
+import { delay, Observable, of } from 'rxjs';
 
 export type UploadDocumentType = 'receipt' | 'invoice';
 export type UploadDocumentLanguage = 'auto' | 'en-CA' | 'fr-CA' | 'bilingual-CA';
@@ -135,9 +135,84 @@ export class DocumentService {
     return this.http.get<DocumentDetailDto>(`${this.apiUrl}/${id}`);
   }
 
+  // private mockCounter = 0;
+
+  // getDocument(id: string): Observable<DocumentDetailDto> {
+  //   this.mockCounter++;
+
+  //   const status = this.mockCounter < 4 ? 'Running' : 'Completed';
+
+  //   console.log(`MOCK getDocument: returning ${status} (call #${this.mockCounter})`);
+
+  //   return of({
+  //     id,
+  //     originalFileName: 'mock.pdf',
+  //     storedFileName: "8acc93535e184b388fb84022bc12866d.pdf",
+  //     contentType: 'application/pdf',
+  //     documentType: 'Invoice',
+  //     status,
+  //     uploadedAtUtc: new Date().toISOString(),
+  //     processedAtUtc: new Date().toISOString(),
+  //     fileSizeBytes: 12345,
+  //     documentLanguage: 'EnglishCanada'
+  //   }).pipe(delay(500));
+  // }
+
+
   getDocumentResult(id: string): Observable<DocumentResultDto> {
     return this.http.get<DocumentResultDto>(`${this.apiUrl}/${id}/result`);
   }
+
+  // private mockCounter = 0;
+
+  // getDocumentResult(id: string): Observable<DocumentResultDto> {
+  //   this.mockCounter++;
+
+  //   const base: DocumentResultDto = {
+  //     "document": {
+  //       "id": "46590962-1c6e-4f5c-bcea-97d20c0467a2",
+  //       "originalFileName": "sample-pdf-invoice.pdf",
+  //       "storedFileName": "8acc93535e184b388fb84022bc12866d.pdf",
+  //       "contentType": "application/pdf",
+  //       "documentType": "Invoice",
+  //       "status": "Running",
+  //       "uploadedAtUtc": "2026-06-09T13:34:23.2924715",
+  //       "processedAtUtc": "2026-06-09T13:34:23.3827169"
+  //   },
+  //   "requestedDocumentLanguage": "EnglishCanada",
+  //   "detectedDocumentLanguage": "EnglishCanada",
+  //   "latestExtractionJob": {
+  //       "id": "1419fa43-585f-409d-8232-bd9122bd948e",
+  //       "startedAtUtc": "2026-06-09T13:34:23.317065",
+  //       "completedAtUtc": "2026-06-09T13:34:23.3756202",
+  //       "status": this.mockCounter < 4 ? 'Running' : 'Completed',
+  //       "errorMessage": null
+  //   },
+  //     rawText: '',
+  //     lineItems: [],
+  //     bilingualWarnings: [],
+  //     "confidence": 1.0000,
+  //   "primaryOcrEngineUsed": "NativePdfText",
+  //   "fallbackOcrEngineUsed": null,
+  //   "fallbackUsed": false,
+  //   "providerName": "NativePdf",
+  //   "modelName": "PdfPig",
+  //   "primaryLatencyMs": 39,
+  //   "fallbackLatencyMs": null,
+  //   "providerLatencyMs": 39,
+  //   "totalProcessingLatencyMs": 39,
+  //   "estimatedProviderCost": 0.000000,
+  //   "pageCount": 2
+  //   };
+
+  //   console.log(
+  //     `MOCK: returning ${base?.latestExtractionJob?.status} (call #${this.mockCounter})`
+  //   );
+
+  //   return of(base).pipe(delay(500));
+  // }
+
+
 
   getRawText(id: string): Observable<DocumentRawTextDto> {
     return this.http.get<DocumentRawTextDto>(`${this.apiUrl}/${id}/raw-text`);
@@ -155,7 +230,7 @@ export class DocumentService {
     return this.http.put<DocumentResultDto>(`${this.apiUrl}/${id}/extracted-fields`, request);
   }
 
-  uploadDocument(file: File, documentType: UploadDocumentType, documentLanguage: UploadDocumentLanguage, enqueueProcessing = false): Observable<HttpEvent<UploadDocumentResponseDto>> {
+  uploadDocument(file: File, documentType: UploadDocumentType, documentLanguage: UploadDocumentLanguage, enqueueProcessing = true): Observable<HttpEvent<UploadDocumentResponseDto>> {
     const formData = this.createUploadFormData([file], documentType, documentLanguage, enqueueProcessing);
 
     return this.http.post<UploadDocumentResponseDto>(`${this.apiUrl}/upload`, formData, {
